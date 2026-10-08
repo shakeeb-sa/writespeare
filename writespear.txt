@@ -1,0 +1,5562 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+apps/
+  desktop/
+    scripts/
+      optimize-images.mjs
+    src/
+      features/
+        admin/
+          components/
+            UserForm.tsx
+            UserList.tsx
+          hooks/
+            useAdmin.ts
+          ipc/
+            adminIPC.ts
+          pages/
+            Admin.tsx
+          store/
+            adminStore.ts
+        auth/
+          api/
+            authApi.ts
+          hooks/
+            useAuth.ts
+          ipc/
+            authIPC.ts
+          pages/
+            Login.tsx
+          store/
+            userStore.ts
+          types/
+            authTypes.ts
+        automation/
+          components/
+            CaptchaModal.tsx
+            RunningTaskIndicator.tsx
+          hooks/
+            useAutomation.ts
+          ipc/
+            automationIPC.ts
+          store/
+            automationStore.ts
+        documents/
+          components/
+            DocumentList.tsx
+            DocumentPreview.tsx
+          hooks/
+            useDocuments.ts
+          ipc/
+            documentsIPC.ts
+          services/
+            documentService.ts
+          store/
+            documentStore.ts
+        export/
+          components/
+            ExportMenu.tsx
+          hooks/
+            useExport.ts
+          ipc/
+            exportIPC.ts
+          services/
+            exportService.ts
+        research/
+          components/
+            SearchProgress.tsx
+            SourceCandidate.tsx
+            SourceList.tsx
+          hooks/
+            useResearch.ts
+          ipc/
+            researchIPC.ts
+          services/
+            childProcessManager.ts
+            chromeLauncher.ts
+            extractionService.ts
+            listenerBridge.ts
+            portAllocator.ts
+            searchService.ts
+          store/
+            researchStore.ts
+        settings/
+          hooks/
+            useSettings.ts
+          ipc/
+            settingsIPC.ts
+          pages/
+            Settings.tsx
+          services/
+            updateService.ts
+          store/
+            settingsStore.ts
+        shared/
+          api/
+            client.ts
+          components/
+            Layout.tsx
+            Modal.tsx
+            Sidebar.tsx
+            Toast.tsx
+          constants/
+            index.ts
+          hooks/
+            useToast.ts
+          store/
+            rootStore.ts
+          types/
+            index.ts
+          utils/
+            encryption.ts
+            logger.ts
+        topics/
+          components/
+            AdvancedSettings.tsx
+            NewTopicModal.tsx
+            PresetSelector.tsx
+            TopicCard.tsx
+          hooks/
+            useTopics.ts
+          ipc/
+            topicsIPC.ts
+          pages/
+            TopicDetail.tsx
+            Topics.tsx
+          services/
+            topicsApi.ts
+          store/
+            topicStore.ts
+        validation/
+          components/
+            AiMarkersPanel.tsx
+            GrammarPanel.tsx
+            KeywordPanel.tsx
+            OriginalityPanel.tsx
+            ReadabilityPanel.tsx
+            SeoPanel.tsx
+            ValidationReport.tsx
+          hooks/
+            useValidation.ts
+          ipc/
+            validationIPC.ts
+          services/
+            validationService.ts
+          store/
+            validationStore.ts
+        writer/
+          components/
+            ArticlePreview.tsx
+            PromptSelector.tsx
+            WriterProgress.tsx
+          hooks/
+            useWriter.ts
+          ipc/
+            writerIPC.ts
+          services/
+            writerService.ts
+          store/
+            writerStore.ts
+      main/
+        index.ts
+        preload.ts
+        protocols.ts
+        store.ts
+      renderer/
+        styles/
+          tailwind.css
+        App.tsx
+        index.tsx
+      resources/
+        config/
+          default_presets.json
+          exclude_sites.csv
+          paywall_domains.txt
+        scripts/
+          core/
+            __init__.py
+            browser.py
+            control_mode.py
+            extractor.py
+            file_io.py
+            output.py
+            utils.py
+          export/
+            __init__.py
+            export_docx.py
+            export_md.py
+          migrations/
+            .gitkeep
+          research/
+            __init__.py
+            duckduckgo_search.py
+            extract_dispatch.py
+            extract_generic.py
+            extract_medium.py
+            extract_quora.py
+            extract_reddit.py
+            extract_twitter.py
+            google_search.py
+          validation/
+            __init__.py
+            ai_markers.py
+            grammar.py
+            keyword_check.py
+            originality.py
+            readability.py
+            seo_check.py
+            validate_all.py
+          writer/
+            __init__.py
+            deepseek_writer.py
+          main.py
+          requirements.txt
+    .gitattributes
+    .gitignore
+    index.html
+    package.json
+    postcss.config.js
+    tailwind.config.js
+    tsconfig.json
+    vite.config.ts
+  server/
+    handler/
+      index.ts
+    src/
+      features/
+        admin/
+          controllers/
+            adminController.ts
+          middleware/
+            adminGuard.ts
+          routes/
+            adminRoutes.ts
+          services/
+            adminService.ts
+          index.ts
+        articles/
+          controllers/
+            articleController.ts
+          models/
+            Article.ts
+          routes/
+            articleRoutes.ts
+          services/
+            articleService.ts
+          index.ts
+        auth/
+          controllers/
+            authController.ts
+          middleware/
+            authGuard.ts
+          models/
+            User.ts
+          routes/
+            authRoutes.ts
+          services/
+            authService.ts
+          utils/
+            bcrypt.ts
+            jwt.ts
+          index.ts
+        documents/
+          controllers/
+            documentController.ts
+          models/
+            Document.ts
+          routes/
+            documentRoutes.ts
+          services/
+            documentService.ts
+          index.ts
+        reports/
+          controllers/
+            reportController.ts
+          models/
+            Report.ts
+          routes/
+            reportRoutes.ts
+          services/
+            reportService.ts
+          index.ts
+        settings/
+          controllers/
+            settingsController.ts
+          models/
+            Preset.ts
+            UserSetting.ts
+          routes/
+            settingsRoutes.ts
+          services/
+            settingsService.ts
+          index.ts
+        shared/
+          config/
+            db.ts
+          middleware/
+            errorHandler.ts
+            rateLimit.ts
+            validate.ts
+          types/
+            index.ts
+          utils/
+            bcrypt.ts
+            seedAdmin.ts
+        topics/
+          controllers/
+            topicController.ts
+          models/
+            Topic.ts
+          routes/
+            topicRoutes.ts
+          services/
+            topicService.ts
+          index.ts
+        users/
+          controllers/
+            userController.ts
+          routes/
+            userRoutes.ts
+          services/
+            userService.ts
+          index.ts
+        version/
+          controllers/
+            versionController.ts
+          models/
+            AppVersion.ts
+          routes/
+            versionRoutes.ts
+          index.ts
+      app.ts
+      index.ts
+    .env.example
+    .gitignore
+    package.json
+    tsconfig.json
+    vercel.json
+.env.example
+.gitattributes
+.gitignore
+create-structure.bat
+package.json
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="apps/desktop/scripts/optimize-images.mjs">
+
+</file>
+
+<file path="apps/desktop/src/features/admin/components/UserForm.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/admin/components/UserList.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/admin/hooks/useAdmin.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/admin/ipc/adminIPC.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/admin/pages/Admin.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/admin/store/adminStore.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/auth/api/authApi.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/auth/hooks/useAuth.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/auth/ipc/authIPC.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/auth/pages/Login.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/auth/store/userStore.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/auth/types/authTypes.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/automation/components/CaptchaModal.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/automation/components/RunningTaskIndicator.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/automation/hooks/useAutomation.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/automation/ipc/automationIPC.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/automation/store/automationStore.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/documents/components/DocumentList.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/documents/components/DocumentPreview.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/documents/hooks/useDocuments.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/documents/ipc/documentsIPC.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/documents/services/documentService.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/documents/store/documentStore.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/export/components/ExportMenu.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/export/hooks/useExport.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/export/ipc/exportIPC.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/export/services/exportService.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/research/components/SearchProgress.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/research/components/SourceCandidate.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/research/components/SourceList.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/research/hooks/useResearch.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/research/ipc/researchIPC.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/research/services/childProcessManager.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/research/services/chromeLauncher.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/research/services/extractionService.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/research/services/listenerBridge.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/research/services/portAllocator.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/research/services/searchService.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/research/store/researchStore.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/settings/hooks/useSettings.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/settings/ipc/settingsIPC.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/settings/pages/Settings.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/settings/services/updateService.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/settings/store/settingsStore.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/api/client.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/components/Layout.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/components/Modal.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/components/Sidebar.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/components/Toast.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/constants/index.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/hooks/useToast.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/store/rootStore.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/types/index.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/utils/encryption.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/shared/utils/logger.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/topics/components/AdvancedSettings.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/topics/components/NewTopicModal.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/topics/components/PresetSelector.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/topics/components/TopicCard.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/topics/hooks/useTopics.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/topics/ipc/topicsIPC.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/topics/pages/TopicDetail.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/topics/pages/Topics.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/topics/services/topicsApi.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/topics/store/topicStore.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/components/AiMarkersPanel.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/components/GrammarPanel.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/components/KeywordPanel.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/components/OriginalityPanel.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/components/ReadabilityPanel.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/components/SeoPanel.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/components/ValidationReport.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/hooks/useValidation.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/ipc/validationIPC.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/services/validationService.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/validation/store/validationStore.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/writer/components/ArticlePreview.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/writer/components/PromptSelector.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/writer/components/WriterProgress.tsx">
+
+</file>
+
+<file path="apps/desktop/src/features/writer/hooks/useWriter.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/writer/ipc/writerIPC.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/writer/services/writerService.ts">
+
+</file>
+
+<file path="apps/desktop/src/features/writer/store/writerStore.ts">
+
+</file>
+
+<file path="apps/desktop/src/main/index.ts">
+
+</file>
+
+<file path="apps/desktop/src/main/preload.ts">
+
+</file>
+
+<file path="apps/desktop/src/main/protocols.ts">
+
+</file>
+
+<file path="apps/desktop/src/main/store.ts">
+
+</file>
+
+<file path="apps/desktop/src/renderer/styles/tailwind.css">
+
+</file>
+
+<file path="apps/desktop/src/renderer/App.tsx">
+
+</file>
+
+<file path="apps/desktop/src/renderer/index.tsx">
+
+</file>
+
+<file path="apps/desktop/src/resources/config/default_presets.json">
+
+</file>
+
+<file path="apps/desktop/src/resources/config/exclude_sites.csv">
+
+</file>
+
+<file path="apps/desktop/src/resources/config/paywall_domains.txt">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/core/__init__.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/core/browser.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/core/control_mode.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/core/extractor.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/core/file_io.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/core/output.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/core/utils.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/export/__init__.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/export/export_docx.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/export/export_md.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/migrations/.gitkeep">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/research/__init__.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/research/duckduckgo_search.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/research/extract_dispatch.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/research/extract_generic.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/research/extract_medium.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/research/extract_quora.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/research/extract_reddit.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/research/extract_twitter.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/research/google_search.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/validation/__init__.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/validation/ai_markers.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/validation/grammar.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/validation/keyword_check.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/validation/originality.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/validation/readability.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/validation/seo_check.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/validation/validate_all.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/writer/__init__.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/writer/deepseek_writer.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/main.py">
+
+</file>
+
+<file path="apps/desktop/src/resources/scripts/requirements.txt">
+
+</file>
+
+<file path="apps/desktop/.gitattributes">
+
+</file>
+
+<file path="apps/desktop/.gitignore">
+# ============================================================
+#  Node.js / JavaScript
+# ============================================================
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+*.md
+# ============================================================
+#  Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pythonenv*
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+*.pyc
+
+# ============================================================
+#  Desktop App (Electron)
+# ============================================================
+
+# Build outputs
+dist/
+out/
+build/
+release/
+*.exe
+*.dmg
+*.AppImage
+*.snap
+*.deb
+*.rpm
+
+# Electron specific
+*.asar
+*.asar.unpacked
+
+# ============================================================
+#  Backend
+# ============================================================
+
+backend/dist/
+backend/node_modules/
+backend/.env
+backend/.env.local
+backend/.env.*.local
+
+# ============================================================
+#  Vercel
+# ============================================================
+
+
+# ============================================================
+#  IDE / Editor
+# ============================================================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vs/
+.wakatime-project
+
+# ============================================================
+#  Operating System
+# ============================================================
+
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.temp
+
+# ============================================================
+#  Application Specific
+# ============================================================
+
+# Campaign data (user generated)
+plan.xlsx
+results.csv
+*.log
+
+# Image library — TEMPORARILY IGNORED (see "RE-ENABLE TRACKING" below).
+#
+# The bundled image library (~1,000 images) is excluded from git for
+# now to keep pushes fast and the repo small. The images still live on
+# disk at apps/desktop/src/resources/images/ and are still bundled by
+# `npm run pack` via the extraResources entry in package.json — they
+# simply are not tracked by git.
+#
+# *.png is ignored globally (see the screenshot rules below). The
+# folder-level ignore below catches every format, not just PNG.
+*.png
+apps/desktop/src/resources/images/
+
+# RE-ENABLE TRACKING LATER:
+#   1. Delete the line above (`apps/desktop/src/resources/images/`).
+#   2. Append these four negations, in this order, at the end of
+#      this same section:
+#          !apps/desktop/src/resources/images/**/*.png
+#          !apps/desktop/src/resources/images/**/*.jpg
+#          !apps/desktop/src/resources/images/**/*.jpeg
+#          !apps/desktop/src/resources/images/**/*.webp
+#   3. Run: git add apps/desktop/src/resources/images/
+
+# Image optimization backups
+# Written by apps/desktop/scripts/optimize-images.mjs — pre-optimization
+# originals kept locally. Not tracked, not shipped in the .exe. Safe to
+# delete if you no longer need the originals.
+apps/desktop/.image-backups/
+
+# Screenshots
+results/*.png
+error_*.png
+
+# Temporary config
+resources/config/*.tmp
+resources/config/*.bak
+
+# Playwright browsers (large, can be re-downloaded)
+resources/python/lib/python*/site-packages/playwright/driver/
+resources/python/lib/python*/site-packages/playwright/.local-browsers/
+
+# Compiled Python (obfuscated)
+resources/scripts/**/*.pyc
+resources/scripts/**/__pycache__/
+
+# Local environment
+.env
+.env.local
+.env.*.local
+
+# ============================================================
+#  Secrets / Credentials
+# ============================================================
+
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.p8
+*.p7b
+
+# ============================================================
+#  Test / Coverage
+# ============================================================
+
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# ============================================================
+#  Archive / Backup
+# ============================================================
+
+*.zip
+*.tar.gz
+*.7z
+*.rar
+*.bak
+*.backup
+
+# ============================================================
+#  User-specific files
+# ============================================================
+
+# Excel temporary files
+~$*.xlsx
+~$*.xls
+*.xlk
+
+# ============================================================
+#  Logs
+# ============================================================
+
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# ============================================================
+#  TypeScript (compiled outputs)
+# ============================================================
+
+*.tsbuildinfo
+*.js.map
+*.d.ts.map
+
+# ============================================================
+#  Python virtual environment (global)
+# ============================================================
+
+# Ignore any virtual environment folders in the project root
+.venv/
+venv/
+env/
+myenv/
+
+# ============================================================
+#  MongoDB / Database
+# ============================================================
+
+*.db
+*.sqlite
+*.sqlite3
+mongodb-data/
+
+# ============================================================
+#  Distribution / Packaging
+# ============================================================
+
+*.exe
+*.msi
+*.dmg
+*.pkg
+*.deb
+*.rpm
+*.AppImage
+*.snap
+*.flatpak
+*.portable
+*.nupkg
+*.nuget
+
+vite.config.js
+vite.config.js.map
+vite.config.d.ts
+*.d.ts
+
+*.md
+</file>
+
+<file path="apps/desktop/index.html">
+
+</file>
+
+<file path="apps/desktop/package.json">
+{
+  "name": "writespeare-desktop",
+  "version": "1.0.0",
+  "description": "WriteSpeare - AI Content Writer",
+  "main": "dist/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron .",
+    "type-check": "tsc --noEmit",
+    "build:renderer": "vite build",
+    "build:main": "tsc",
+    "build": "npm run build:renderer && npm run build:main",
+    "pack": "npm run build && electron-builder",
+    "optimize:images": "node scripts/optimize-images.mjs"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "cheerio": "^1.0.0",
+    "electron-store": "^11.0.2",
+    "electron-updater": "^6.8.9",
+    "framer-motion": "^13.2.0",
+    "lucide-react": "^1.43.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^9.0.1",
+    "react-router-dom": "^7.18.3",
+    "remark-gfm": "^4.0.0",
+    "tree-kill": "^1.2.2",
+    "xlsx": "^0.18.5",
+    "zustand": "^5.0.15"
+  },
+  "build": {
+    "appId": "com.writespeare.writer",
+    "productName": "WriteSpeare",
+    "electronVersion": "44.3.0",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "!src/resources/python/**/*",
+      "!src/resources/scripts/**/*",
+      "!src/resources/config/**/*",
+      "!src/resources/images/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "src/resources/python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "src/resources/scripts",
+        "to": "scripts",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "src/resources/config",
+        "to": "config",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "src/resources/images",
+        "to": "images",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.70.0",
+    "@typescript-eslint/parser": "^8.70.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.5.5",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "eslint": "^10.10.0",
+    "javascript-obfuscator": "^5.7.0",
+    "postcss": "^8.5.28",
+    "sharp": "^0.33.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "~5.8.3",
+    "vite": "^8.2.2"
+  }
+}
+</file>
+
+<file path="apps/desktop/postcss.config.js">
+
+</file>
+
+<file path="apps/desktop/tailwind.config.js">
+
+</file>
+
+<file path="apps/desktop/tsconfig.json">
+
+</file>
+
+<file path="apps/desktop/vite.config.ts">
+
+</file>
+
+<file path="apps/server/handler/index.ts">
+
+</file>
+
+<file path="apps/server/src/features/admin/controllers/adminController.ts">
+
+</file>
+
+<file path="apps/server/src/features/admin/middleware/adminGuard.ts">
+
+</file>
+
+<file path="apps/server/src/features/admin/routes/adminRoutes.ts">
+
+</file>
+
+<file path="apps/server/src/features/admin/services/adminService.ts">
+
+</file>
+
+<file path="apps/server/src/features/admin/index.ts">
+
+</file>
+
+<file path="apps/server/src/features/articles/controllers/articleController.ts">
+
+</file>
+
+<file path="apps/server/src/features/articles/models/Article.ts">
+
+</file>
+
+<file path="apps/server/src/features/articles/routes/articleRoutes.ts">
+
+</file>
+
+<file path="apps/server/src/features/articles/services/articleService.ts">
+
+</file>
+
+<file path="apps/server/src/features/articles/index.ts">
+
+</file>
+
+<file path="apps/server/src/features/auth/controllers/authController.ts">
+/**
+ * Authentication controller.
+ *
+ * Thin HTTP layer over the auth service. Each handler:
+ *
+ *   1. Validates the shape of the request body or query — enough
+ *      to catch a malformed client before it reaches the service.
+ *
+ *   2. Calls the service.
+ *
+ *   3. Formats the success response using the shared `ApiResponse`
+ *      envelope.
+ *
+ * Any error the service throws (an `AppError` for known cases, a
+ * raw error for unexpected cases) propagates up to the terminal
+ * error middleware. Neither handler contains a try/catch — the
+ * `asyncHandler` wrapper installed at the route registration site
+ * forwards rejections, and the middleware classifies and formats
+ * them. This keeps the controller free of any error-handling
+ * logic that would duplicate what the middleware already does.
+ *
+ * Request validation here is intentionally minimal. The service
+ * already performs the authoritative checks (email format is
+ * enforced by the schema, password requirements by the login
+ * flow). The controller's checks only exist to reject a request
+ * that is so malformed the service would produce a confusing
+ * error — a missing email, a non-string password. Anything
+ * subtler is the service's concern.
+ */
+
+import type { Response } from 'express';
+import {
+  loginUser,
+  getUserById,
+  type PublicUser,
+} from '../services/authService.js';
+import type { AuthRequest } from '../middleware/authGuard.js';
+import type {
+  LoginRequest,
+  LoginResponse,
+  ApiResponse,
+} from '../../shared/types/index.js';
+
+// ============================================================
+//  POST /api/auth/login
+// ============================================================
+
+/**
+ * Authenticate a user and return a token.
+ *
+ * The request body is typed as `LoginRequest` (email and password
+ * as strings). TypeScript types are erased at runtime, so a
+ * non-conforming request — a missing field, a numeric password,
+ * a null body — is possible. The guards below check for the two
+ * cases that would produce a confusing service error: an absent
+ * body and non-string field values.
+ *
+ * On success, the response carries the `LoginResponse` shape:
+ * `{ user, token }` inside the standard envelope.
+ *
+ * On failure, the service throws an `AppError` with a deliberate
+ * status code (401 for invalid credentials, 403 for a deactivated
+ * account), and the terminal middleware formats the response.
+ */
+export const login = async (
+  req: AuthRequest<Record<string, string>, unknown, LoginRequest>,
+  res: Response<ApiResponse<LoginResponse>>
+): Promise<void> => {
+  const body = req.body;
+
+  // ---- Guard: body must be an object ----
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    res.status(400).json({
+      success: false,
+      error: 'Request body must be a JSON object.',
+    });
+    return;
+  }
+
+  // ---- Guard: email and password must be strings ----
+  if (typeof body.email !== 'string' || typeof body.password !== 'string') {
+    res.status(400).json({
+      success: false,
+      error: 'Email and password are required.',
+    });
+    return;
+  }
+
+  // ---- Delegate to the service ----
+  //
+  // The service throws on any credential failure. That throw
+  // propagates out of this handler, is caught by the asyncHandler
+  // wrapper at the route registration site, and is forwarded to
+  // the terminal middleware, which honours the AppError status
+  // code. No try/catch here — the middleware is the single place
+  // that knows how to format errors.
+  const { token, user } = await loginUser(body.email, body.password);
+
+  res.status(200).json({
+    success: true,
+    data: { user, token },
+  });
+};
+
+// ============================================================
+//  GET /api/auth/me
+// ============================================================
+
+/**
+ * Return the currently authenticated user's profile.
+ *
+ * This handler is always reached through the `authenticate`
+ * middleware, which has already verified the token and populated
+ * `req.user` with the decoded payload. The `req.user` field is
+ * optional on `AuthRequest` because the type is shared with
+ * unauthenticated handlers, so this handler narrows it with a
+ * defensive check — if the middleware chain were ever misconfigured
+ * and this handler reached without a user attached, the correct
+ * response is a 401, not a crash on a null dereference.
+ *
+ * Two distinct failure cases, each with its own status code:
+ *
+ *   - No `req.user` on the request → 401. The authentication
+ *     middleware did not run, or ran and rejected. Either way,
+ *     the caller has no session.
+ *
+ *   - `req.user.userId` does not resolve to a user → 404. The
+ *     token is valid and was signed for a user ID, but that user
+ *     no longer exists in the database. This happens when an
+ *     admin deletes an account while the client still holds a
+ *     token. The correct response is 404 (the resource — the
+ *     user — is gone), not 401 (the token is still valid).
+ */
+export const getMe = async (
+  req: AuthRequest,
+  res: Response<ApiResponse<PublicUser>>
+): Promise<void> => {
+  // ---- Guard: authentication middleware must have run ----
+  const userId = req.user?.userId;
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      error: 'Authentication required.',
+    });
+    return;
+  }
+
+  // ---- Delegate to the service ----
+  const user = await getUserById(userId);
+  if (!user) {
+    res.status(404).json({
+      success: false,
+      error: 'User not found.',
+    });
+    return;
+  }
+
+  res.status(200).json({
+    success: true,
+    data: user,
+  });
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default {
+  login,
+  getMe,
+};
+</file>
+
+<file path="apps/server/src/features/auth/middleware/authGuard.ts">
+/**
+ * Authentication and authorization middleware for the WriteSpeare
+ * backend.
+ *
+ * Three middleware functions live here, each serving a distinct
+ * gate:
+ *
+ *   authenticate          — the strict gate. Requires a valid,
+ *                           unexpired token belonging to a user
+ *                           who still exists and is active.
+ *                           Anything less produces a 401 (or 403
+ *                           for the deactivated-user case). Used
+ *                           by every route except login and the
+ *                           public version endpoint.
+ *
+ *   optionalAuthenticate  — the lenient gate. Attaches a user to
+ *                           the request when a valid token is
+ *                           present and swallow-fails in every
+ *                           other case, always calling `next()`.
+ *                           Used by routes that behave differently
+ *                           for logged-in and anonymous callers
+ *                           but do not require a session.
+ *
+ *   requireAdmin          — the role gate. Must be layered AFTER
+ *                           `authenticate` (or after any other
+ *                           middleware that populates `req.user`).
+ *                           Returns 403 when the attached user is
+ *                           not an admin. Never verifies a token
+ *                           itself.
+ *
+ * Token extraction, verification, and user lookup are the three
+ * steps that would otherwise be duplicated across every protected
+ * route. Centralising them here means the authentication contract
+ * lives in exactly one file, and a change to that contract (say,
+ * adding a token-version check) has exactly one place to go.
+ *
+ * Request typing:
+ *
+ *   `AuthRequest` extends Express's `Request` with an optional
+ *   `user` field. Every controller that needs to read `req.user`
+ *   types its handler parameter as `AuthRequest`, which gives the
+ *   compiler the shape of `user` without a cast. The `user` field
+ *   is optional because unauthenticated requests reaching a
+ *   handler typed as `AuthRequest` still have `req.user === undefined`.
+ *   Handlers that require a user check for it explicitly, or are
+ *   protected by `authenticate` and can rely on it being present.
+ */
+
+import type { Request, Response, NextFunction } from 'express';
+import { verifyToken, type TokenPayload } from '../utils/jwt.js';
+import { UserModel } from '../models/User.js';
+import { UserRole, type ApiResponse } from '../../shared/types/index.js';
+
+// ============================================================
+//  Request shape
+// ============================================================
+
+/**
+ * Express `Request` extended with the decoded JWT payload.
+ *
+ * The `user` field is populated by `authenticate` (or
+ * `optionalAuthenticate`, when a valid token is present) and read
+ * by every downstream middleware and controller that needs to
+ * know who is making the request.
+ *
+ * The field is optional because a handler typed as `AuthRequest`
+ * can be reached by an unauthenticated request if the route is
+ * not wrapped in `authenticate`. Handlers that require a user
+ * either check for the field's presence or rely on `authenticate`
+ * having run — the choice is theirs, not the middleware's.
+ *
+ * `TokenPayload` is deliberately used as-is rather than narrowed
+ * to a richer shape. The middleware has verified the signature by
+ * the time `user` is populated, so the payload's fields are
+ * trustworthy; the fact that `role` is a plain string rather than
+ * the `UserRole` enum is deliberate — the token payload is client-
+ * visible, and keeping its type surface minimal discourages
+ * callers from leaning on it for anything beyond the ID.
+ */
+export interface AuthRequest extends Request {
+  user?: TokenPayload;
+}
+
+// ============================================================
+//  Token extraction
+// ============================================================
+
+/**
+ * Extract the bearer token from an incoming request's
+ * `Authorization` header, or return `null` when the header is
+ * missing, malformed, or empty.
+ *
+ * The accepted form is `Authorization: Bearer <token>`. The
+ * scheme match is case-insensitive because the HTTP specification
+ * declares the scheme token to be case-insensitive, and some
+ * clients send `bearer` in lowercase.
+ *
+ * The returned token is trimmed of surrounding whitespace, so a
+ * stray `\r` from a CRLF-terminated header (rare but observed on
+ * some HTTP clients) does not produce a verification failure that
+ * looks like a signature problem.
+ *
+ * Exported as a standalone helper so a future audit-log
+ * middleware can read the token for diagnostics without pulling
+ * in the whole `authenticate` flow.
+ */
+export const extractToken = (req: Request): string | null => {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader !== 'string') {
+    return null;
+  }
+
+  // Case-insensitive scheme match, then take everything after the
+  // first space. Using `indexOf` rather than `split` avoids
+  // copying the token when the string is large.
+  const schemeEnd = authHeader.indexOf(' ');
+  if (schemeEnd < 0) {
+    return null;
+  }
+
+  const scheme = authHeader.slice(0, schemeEnd).toLowerCase();
+  if (scheme !== 'bearer') {
+    return null;
+  }
+
+  const token = authHeader.slice(schemeEnd + 1).trim();
+  return token.length > 0 ? token : null;
+};
+
+// ============================================================
+//  authenticate — the strict gate
+// ============================================================
+
+/**
+ * Verify the request's bearer token and attach the decoded
+ * payload to `req.user`. Reject the request with a structured
+ * error response in every failure case.
+ *
+ * Failure cases, in the order they are checked:
+ *
+ *   1. Missing or malformed Authorization header → 401.
+ *   2. Token fails signature or format verification → 401,
+ *      with a message that distinguishes the expired case
+ *      ("Session expired") from the invalid case ("Invalid
+ *      authentication token").
+ *   3. Signature is valid but the user ID in the token does not
+ *      resolve to an existing user → 401. This is what happens
+ *      when an admin deletes a user while that user's token is
+ *      still live.
+ *   4. User exists but `active` is `false` → 403. A deactivated
+ *      account is a distinct case from a non-existent one; the
+ *      client-side UI uses the status code to show a different
+ *      message ("Account deactivated" rather than "Please log in
+ *      again").
+ *   5. User lookup fails for any other reason (database error,
+ *      malformed ObjectId in a compromised token) → 500. The
+ *      underlying error is logged server-side; the client sees
+ *      a generic authentication failure so nothing about the
+ *      server's internals leaks.
+ *
+ * On success, `next()` is called and the request proceeds down
+ * the middleware chain with `req.user` populated.
+ *
+ * The function is `async` because it awaits the user lookup. The
+ * explicit `next()` calls in each terminal branch are what keep
+ * the middleware chain linear and predictable — a silent return
+ * after sending a response would leave Express waiting for a
+ * `next` that never comes, and the request would hang.
+ */
+export const authenticate = async (
+  req: AuthRequest,
+  res: Response<ApiResponse<null>>,
+  next: NextFunction
+): Promise<void> => {
+  // ---- Step 1: extract the token ----
+  const token = extractToken(req);
+  if (!token) {
+    res.status(401).json({
+      success: false,
+      error: 'Authentication required. Please provide a valid token.',
+    });
+    return;
+  }
+
+  // ---- Step 2: verify the token ----
+  //
+  // `verifyToken` throws on any verification failure — expired,
+  // malformed, wrong signature. The thrown error's message wraps
+  // the underlying reason, so we inspect the message text to
+  // distinguish the expired case, which the client should handle
+  // differently from a generic invalid-token error.
+  //
+  // The message inspection is deliberate and documented as
+  // fragile in the honesty notes for this file. The alternative —
+  // exposing the raw jsonwebtoken error classes from the util
+  // layer — would couple every consumer of the util to the
+  // library's internal error taxonomy, which is not worth it for
+  // one string comparison.
+  let decoded: TokenPayload;
+  try {
+    decoded = verifyToken(token);
+  } catch (error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    const message = raw.toLowerCase().includes('expired')
+      ? 'Session expired. Please log in again.'
+      : 'Invalid authentication token.';
+    res.status(401).json({ success: false, error: message });
+    return;
+  }
+
+  // ---- Steps 3, 4, 5: user lookup, activity check, error handling ----
+  try {
+    // Project only the fields needed for the checks below. The
+    // password hash is `select: false` on the schema, so it is
+    // excluded by default; the explicit projection narrows the
+    // network payload further.
+    const user = await UserModel.findById(decoded.userId).select('_id active');
+
+    if (!user) {
+      res.status(401).json({
+        success: false,
+        error: 'User no longer exists.',
+      });
+      return;
+    }
+
+    if (!user.active) {
+      res.status(403).json({
+        success: false,
+        error: 'Account is deactivated. Please contact an administrator.',
+      });
+      return;
+    }
+
+    // Populate the request. From this point on, every downstream
+    // middleware and controller can read `req.user.userId`,
+    // `req.user.email`, and `req.user.role`.
+    req.user = decoded;
+    next();
+  } catch (error) {
+    console.error('authGuard: user lookup failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Authentication failed due to a server error.',
+    });
+  }
+};
+
+// ============================================================
+//  optionalAuthenticate — the lenient gate
+// ============================================================
+
+/**
+ * Attempt to authenticate the request. Attach a user to the
+ * request when the token is valid and belongs to an active user;
+ * otherwise, do nothing. Always calls `next()`.
+ *
+ * This middleware NEVER sends a response. Its contract is
+ * "populate `req.user` if you can, then move on regardless". The
+ * downstream handler is responsible for deciding whether the
+ * absence of a user is acceptable (a public profile view, for
+ * example) or not (a protected action, in which case the handler
+ * checks `req.user` explicitly).
+ *
+ * The internal token-verification block is wrapped in its own
+ * try/catch so that an invalid token on an optional-auth route
+ * does not produce the same 401 that `authenticate` would emit —
+ * the whole point of this middleware is that a bad token is
+ * treated identically to a missing one.
+ *
+ * The user-existence check is also wrapped, and its failure is
+ * swallowed for the same reason: a stale user ID in a client's
+ * stored token should not break an anonymous-accessible route.
+ */
+export const optionalAuthenticate = async (
+  req: AuthRequest,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const token = extractToken(req);
+    if (!token) {
+      next();
+      return;
+    }
+
+    let decoded: TokenPayload;
+    try {
+      decoded = verifyToken(token);
+    } catch {
+      next();
+      return;
+    }
+
+    try {
+      const user = await UserModel.findById(decoded.userId).select('_id active');
+      if (user && user.active) {
+        req.user = decoded;
+      }
+    } catch {
+      // swallow — this path is best-effort by contract
+    }
+
+    next();
+  } catch {
+    // Defensive outer catch: any unexpected throw still results in
+    // a request that proceeds without an authenticated user.
+    next();
+  }
+};
+
+// ============================================================
+//  requireAdmin — the role gate
+// ============================================================
+
+/**
+ * Reject the request unless the attached user has the admin role.
+ *
+ * Must be layered AFTER a middleware that populates `req.user` —
+ * typically `authenticate`, but `optionalAuthenticate` also
+ * qualifies for routes where admin access is optional (a rare
+ * case but one the layering supports without modification).
+ *
+ * Two failure modes:
+ *
+ *   - No `req.user` on the request → 401. The admin gate cannot
+ *     be the first middleware on a route; if it is reached
+ *     without an attached user, the route configuration is
+ *     wrong, and the correct response is to reject the request
+ *     rather than assume an identity.
+ *
+ *   - `req.user.role !== 'admin'` → 403. The user is
+ *     authenticated, but lacks the required privilege. 403 (not
+ *     401) is the correct status for an authenticated request
+ *     that the server refuses to authorize.
+ *
+ * The role comparison uses the `UserRole.ADMIN` enum value
+ * rather than the string literal `'admin'` so a future rename of
+ * the enum value propagates here automatically. The comparison
+ * itself is a plain string equality at runtime — enum values in
+ * TypeScript are string literals when the enum is a string enum.
+ */
+export const requireAdmin = (
+  req: AuthRequest,
+  res: Response<ApiResponse<null>>,
+  next: NextFunction
+): void => {
+  if (!req.user) {
+    res.status(401).json({
+      success: false,
+      error: 'Authentication required.',
+    });
+    return;
+  }
+
+  if (req.user.role !== UserRole.ADMIN) {
+    res.status(403).json({
+      success: false,
+      error: 'Admin privileges required.',
+    });
+    return;
+  }
+
+  next();
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default {
+  authenticate,
+  optionalAuthenticate,
+  requireAdmin,
+  extractToken,
+};
+</file>
+
+<file path="apps/server/src/features/auth/models/User.ts">
+/**
+ * Mongoose model for the WriteSpeare User entity.
+ *
+ * Responsibilities:
+ *
+ *   1. Enforce the schema-level invariants of a user record — a
+ *      unique, well-formed email; a non-empty password hash; a
+ *      role drawn from the closed `UserRole` enum; and an `active`
+ *      flag with a safe default of `true`.
+ *
+ *   2. Own the one operation on a user that must never be
+ *      reimplemented by a caller: verifying a candidate password
+ *      against the stored hash. Exposing this as an instance
+ *      method (`comparePassword`) keeps `bcrypt` out of the
+ *      service layer entirely, so a future refactor of the hashing
+ *      strategy has exactly one file to change.
+ *
+ *   3. Defend the hash from accidental serialisation. The
+ *      `passwordHash` path is marked `select: false`, which
+ *      excludes it from every query by default; the `toJSON`
+ *      transform strips it again from any document that was
+ *      fetched with an explicit `.select('+passwordHash')`. Two
+ *      independent guards, because a leaked hash is not the kind
+ *      of mistake that announces itself until it is too late.
+ *
+ * The pre-save hook performs a defensive hash. It hashes the
+ * `passwordHash` field ONLY when the incoming value does not
+ * already look like a bcrypt hash. This is what allows the model
+ * to be correct regardless of which convention the calling service
+ * adopts: a service that hashes before assigning works, and a
+ * service that assigns plaintext works, and neither path produces
+ * a double-hashed value.
+ */
+
+import mongoose, { Schema, Document } from 'mongoose';
+import { User, UserRole } from '../../shared/types/index.js';
+
+// ============================================================
+//  Document interface
+// ============================================================
+
+/**
+ * The runtime shape of a User document as returned by Mongoose.
+ *
+ * Extends `Omit<User, '_id'>` (the shared domain interface minus
+ * its loosely-typed `_id`) and then re-declares `_id` with the
+ * concrete ObjectId type Mongoose actually produces. This is the
+ * standard pattern for a document interface: the shared domain
+ * type stays transport-agnostic (its `_id` is `string | ObjectId`
+ * so it can cross JSON boundaries), while the document interface
+ * pins `_id` to what the ODM actually gives you in-process.
+ *
+ * `comparePassword` is declared here rather than on the schema's
+ * `methods` object because declaring it on the interface is what
+ * gives every consumer of `UserDocument` compile-time knowledge
+ * that the method exists. The runtime attachment happens below via
+ * `UserSchema.methods`.
+ */
+export interface UserDocument extends Omit<User, '_id'>, Document {
+  _id: mongoose.Types.ObjectId;
+  comparePassword(candidatePassword: string): Promise<boolean>;
+}
+
+// ============================================================
+//  Helpers
+// ============================================================
+
+/**
+ * The structural prefix shared by every bcrypt hash produced by
+ * any major bcrypt implementation. The `$2a$`, `$2b$`, and `$2y$`
+ * variants are all in active use; the cost factor follows as two
+ * decimal digits.
+ *
+ * Used by the pre-save hook to detect an already-hashed value.
+ * A plaintext password cannot accidentally match this pattern —
+ * a user would have to type something like `$2a$10$...` verbatim,
+ * which the email/password validation layer rejects upstream.
+ */
+const BCRYPT_HASH_PATTERN = /^\$2[aby]\$\d{2}\$/;
+
+// ============================================================
+//  Schema
+// ============================================================
+
+const UserSchema = new Schema<UserDocument>(
+  {
+    email: {
+      type: String,
+      required: [true, 'Email is required'],
+      unique: true,
+      trim: true,
+      lowercase: true,
+      match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email address'],
+    },
+    passwordHash: {
+      type: String,
+      required: [true, 'Password is required'],
+      select: false,
+    },
+    role: {
+      type: String,
+      enum: {
+        values: Object.values(UserRole),
+        message: 'Role must be either "admin" or "user".',
+      },
+      default: UserRole.USER,
+      required: true,
+    },
+    active: {
+      type: Boolean,
+      default: true,
+      required: true,
+    },
+  },
+  {
+    timestamps: true,
+    toJSON: {
+      transform: (_doc, ret) => {
+        delete ret['passwordHash'];
+        delete ret['__v'];
+        return ret;
+      },
+    },
+  }
+);
+
+// ============================================================
+//  Indexes
+// ============================================================
+//  The unique index on `email` is created implicitly by the
+//  `unique: true` option on the field, so it is not re-declared
+//  here. The two indexes below cover the two access patterns the
+//  admin feature exercises directly:
+//
+//    - Filtering users by role (list of admins).
+//    - Filtering users by active status (list of deactivated
+//      accounts).
+//
+//  A compound index on (role, active) would serve both with a
+//  single scan but is not needed at the current collection size;
+//  it can be added later without a migration.
+
+UserSchema.index({ role: 1 });
+UserSchema.index({ active: 1 });
+
+// ============================================================
+//  Pre-save hook — defensive hash
+// ============================================================
+
+/**
+ * Hash the password field on save, unless it is already hashed.
+ *
+ * The bcrypt module is imported dynamically inside the hook rather
+ * than at module scope. Two reasons:
+ *
+ *   1. It keeps this file's top-level import graph free of the
+ *      native bcrypt binary. A build tool that only needs the
+ *      schema shape (a tooling script, a migration that reads
+ *      the interface) does not have to load the native module.
+ *
+ *   2. It matches the loading behaviour the rest of the backend
+ *      already uses for bcrypt, so there is one convention across
+ *      the codebase rather than two.
+ *
+ * The bcrypt-pattern check is the reason this hook is safe to
+ * keep enabled: a caller that pre-hashes (as the auth service
+ * does) passes a value that matches the pattern, and the hook
+ * steps aside. A caller that assigns plaintext (as a future bulk
+ * import script might) passes a value that does not match, and
+ * the hook does the hashing. Neither path can produce a
+ * double-hashed value, which is the failure mode that breaks
+ * login silently.
+ */
+UserSchema.pre('save', async function (next) {
+  if (!this.isModified('passwordHash')) {
+    return next();
+  }
+
+  const current = this['passwordHash'];
+  if (typeof current !== 'string' || current.length === 0) {
+    return next();
+  }
+
+  if (BCRYPT_HASH_PATTERN.test(current)) {
+    return next();
+  }
+
+  try {
+    const bcrypt = await import('bcrypt');
+    const hashed = await bcrypt.hash(current, 10);
+    this['passwordHash'] = hashed;
+    next();
+  } catch (error) {
+    next(error instanceof Error ? error : new Error(String(error)));
+  }
+});
+
+// ============================================================
+//  Instance method — comparePassword
+// ============================================================
+
+/**
+ * Compare a candidate plaintext password against the stored hash.
+ *
+ * Returns `false` on any failure rather than throwing. A caller
+ * cannot distinguish "wrong password" from "user has no hash on
+ * disk" from "bcrypt threw" — and deliberately should not, because
+ * surfacing those distinctions to a login endpoint would leak
+ * account-existence information to an attacker.
+ *
+ * The `this['passwordHash']` bracket access is required because
+ * `passwordHash` is declared with `select: false` on the schema
+ * and lives behind the document's index signature. A caller that
+ * fetched the user without an explicit `.select('+passwordHash')`
+ * will reach this method with the field absent, and the length
+ * guard handles that case cleanly by returning `false`.
+ */
+UserSchema.methods['comparePassword'] = async function (
+  this: UserDocument,
+  candidatePassword: string
+): Promise<boolean> {
+  try {
+    const stored = this['passwordHash'];
+    if (typeof stored !== 'string' || stored.length === 0) {
+      return false;
+    }
+    const bcrypt = await import('bcrypt');
+    return await bcrypt.compare(candidatePassword, stored);
+  } catch {
+    return false;
+  }
+};
+
+// ============================================================
+//  Model
+// ============================================================
+
+export const UserModel = mongoose.model<UserDocument>('User', UserSchema);
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default UserModel;
+</file>
+
+<file path="apps/server/src/features/auth/routes/authRoutes.ts">
+/**
+ * Authentication routes.
+ *
+ * Declares the two auth endpoints and the middleware chain that
+ * runs in front of each. Mounted at `/api/auth` by the app
+ * factory, so the paths declared here are relative to that
+ * prefix:
+ *
+ *   POST /api/auth/login   → public, no auth required
+ *   GET  /api/auth/me      → requires a valid bearer token
+ *
+ * Every async handler is wrapped in `asyncHandler`. The wrapper
+ * is what makes the controllers' "no try/catch" pattern safe:
+ * when a service throws (for example, `loginUser` on a wrong
+ * password), the rejected promise is caught here and forwarded to
+ * the terminal error middleware, which formats the response using
+ * the status code the thrown `AppError` carried. Without the
+ * wrapper, Express 5 would still forward the rejection on most
+ * runtimes, but relying on that behaviour is fragile across
+ * versions and the wrapper is the explicit, version-independent
+ * contract.
+ *
+ * The routes are declared as a flat sequence of `router.METHOD`
+ * calls rather than as a route table or a declarative
+ * configuration. A reader can scan the file top to bottom and see
+ * exactly which middleware runs on which route without holding
+ * any additional context — that property is worth more than the
+ * brevity a table would buy at this scale.
+ */
+
+import { Router } from 'express';
+import { login, getMe } from '../controllers/authController.js';
+import { authenticate } from '../middleware/authGuard.js';
+import { asyncHandler } from '../../shared/middleware/errorHandler.js';
+
+// ============================================================
+//  Router instance
+// ============================================================
+
+const authRoutes = Router();
+
+// ============================================================
+//  POST /api/auth/login
+// ============================================================
+//
+//  Public endpoint. No middleware beyond the async wrapper.
+//
+//  The controller validates the request body shape, calls the
+//  auth service, and returns the token plus user on success. On
+//  any credential failure, the service throws an `AppError` with
+//  the correct status code (401 for invalid credentials, 403 for
+//  a deactivated account), which the wrapper forwards to the
+//  terminal middleware.
+
+authRoutes.post(
+  '/login',
+  asyncHandler(login)
+);
+
+// ============================================================
+//  GET /api/auth/me
+// ============================================================
+//
+//  Protected endpoint. The `authenticate` middleware runs first,
+//  verifies the bearer token, checks that the user still exists
+//  and is active, and populates `req.user` with the decoded
+//  payload. Only if that succeeds does the controller run.
+//
+//  The middleware sends its own 401 or 403 response and does not
+//  call `next()` on failure, so the controller never sees an
+//  unauthenticated request. The controller's own defensive check
+//  on `req.user` is a belt-and-braces guard against a route being
+//  misconfigured in a future refactor — it is not expected to
+//  fire in practice.
+
+authRoutes.get(
+  '/me',
+  asyncHandler(authenticate),
+  asyncHandler(getMe)
+);
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default authRoutes;
+</file>
+
+<file path="apps/server/src/features/auth/services/authService.ts">
+/**
+ * Authentication service.
+ *
+ * Provides the two operations that the auth controller needs from
+ * the business layer: verify a set of credentials and issue a
+ * token, and read a user by ID. Both return a projection of the
+ * user document that omits the password hash — the same
+ * `PublicUser` shape — so that every path a user object takes to
+ * the client passes through one projection function.
+ *
+ * Error handling:
+ *
+ *   The service throws `AppError` with a deliberate HTTP status
+ *   code at each failure path. `AppError` is the shared error
+ *   vocabulary of the backend; the terminal error middleware
+ *   recognises it and honours the status code without needing
+ *   any service-specific translation. The controller therefore
+ *   only has to call `next(err)` when a service throws — it does
+ *   not classify the error itself.
+ *
+ *   Unexpected failures (a database outage, a malformed ObjectId
+ *   reaching `findById`) are NOT wrapped. They propagate as raw
+ *   errors, which the middleware treats as non-operational 500s
+ *   and logs with the full stack. This is the correct behaviour:
+ *   a bug in the service should be visible, not sanitised into a
+ *   misleading 4xx response.
+ *
+ * Credential verification order:
+ *
+ *   The password comparison happens BEFORE the active-status
+ *   check. This is deliberate. If the active check ran first,
+ *   an attacker could learn the existence of any deactivated
+ *   account by submitting any password — the response would
+ *   differ from the "unknown email" case. Running the password
+ *   check first means the "account deactivated" response is only
+ *   ever returned to a caller who has already proven ownership
+ *   of the account. This is the same information-leak avoidance
+ *   that produces the shared "Invalid email or password" message
+ *   for both the unknown-email and wrong-password cases.
+ */
+
+import { UserModel, type UserDocument } from '../models/User.js';
+import { comparePassword } from '../utils/bcrypt.js';
+import { signToken } from '../utils/jwt.js';
+import type { User } from '../../shared/types/index.js';
+import { AppError } from '../../shared/middleware/errorHandler.js';
+
+// ============================================================
+//  Public projection
+// ============================================================
+
+/**
+ * The shape of a user object as it crosses the API boundary.
+ *
+ * Defined as a local alias so the two public functions in this
+ * file have a single, named return type — a reader scanning the
+ * signatures does not have to re-derive what "user without the
+ * password hash" means. The alias is exported so the controller
+ * (and any future consumer) can reference the same type without
+ * re-declaring it.
+ */
+export type PublicUser = Omit<User, 'passwordHash'>;
+
+/**
+ * Project a full user document into the client-safe shape.
+ *
+ * Explicitly lists every field rather than destructuring and
+ * omitting the hash. An explicit projection fails loudly at
+ * compile time if a field is added to the `User` interface and
+ * this function is not updated — which is what we want, because
+ * a new field on a user record is exactly the kind of change that
+ * deserves a deliberate decision about whether it should be
+ * visible over the API.
+ *
+ * The password hash is never referenced here, and the schema's
+ * `select: false` on that field means most callers could not read
+ * it even if they tried. The projection is the second of the two
+ * independent guards against leaking it.
+ */
+const toPublicUser = (doc: UserDocument): PublicUser => {
+  return {
+    _id: doc._id,
+    email: doc.email,
+    role: doc.role,
+    active: doc.active,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
+};
+
+// ============================================================
+//  loginUser
+// ============================================================
+
+/**
+ * Verify a set of credentials and issue an authentication token.
+ *
+ * Flow:
+ *
+ *   1. Normalize the submitted email — trim whitespace, lowercase
+ *      — so a client that capitalizes the first letter of the
+ *      address still authenticates. The schema lowercases on
+ *      store, so a query that did not also normalize would miss.
+ *
+ *   2. Look up the user by email, explicitly requesting the
+ *      `passwordHash` field. The schema marks it `select: false`,
+ *      which excludes it from every default query; the `+` prefix
+ *      on the projection opts in for this single call.
+ *
+ *   3. If no user exists, throw an `AppError(401)` with the
+ *      generic "Invalid email or password" message. The same
+ *      message is used for a wrong password further down. A
+ *      caller cannot distinguish the two cases from the response.
+ *
+ *   4. Verify the submitted password against the stored hash
+ *      using the timing-safe comparison in `comparePassword`. A
+ *      mismatch throws the same generic `AppError(401)`.
+ *
+ *   5. Only AFTER the password has been verified, check the
+ *      `active` flag. A deactivated account throws
+ *      `AppError(403)` with a distinct message, because the
+ *      caller has now proven they own the account and it is
+ *      correct to tell them why login is being refused. See the
+ *      file header for the ordering rationale.
+ *
+ *   6. Sign a token carrying the user's ID, email, and role, and
+ *      return it alongside the projected user object.
+ *
+ * The email lookup normalizes both sides. The comparison is
+ * case-sensitive at the driver level, but the input has already
+ * been lowercased and the stored value was lowercased by the
+ * schema on write, so the two sides always meet at the same
+ * case.
+ *
+ * @param email    - The email submitted by the client.
+ * @param password - The plaintext password submitted by the client.
+ */
+export const loginUser = async (
+  email: string,
+  password: string
+): Promise<{ token: string; user: PublicUser }> => {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const user = await UserModel.findOne({ email: normalizedEmail }).select(
+    '+passwordHash'
+  );
+
+  if (!user) {
+    throw new AppError('Invalid email or password', 401);
+  }
+
+  // The document type declares `passwordHash: string`, and the
+  // projection above selected it. A type guard is not needed —
+  // a well-formed document always carries the field at this point,
+  // and a malformed one (a raw write bypassing the schema) would
+  // present as an empty string here, which the comparison below
+  // fails cleanly.
+  const isPasswordCorrect = await comparePassword(
+    password,
+    user.passwordHash
+  );
+  if (!isPasswordCorrect) {
+    throw new AppError('Invalid email or password', 401);
+  }
+
+  if (!user.active) {
+    throw new AppError(
+      'Account is deactivated. Please contact an administrator.',
+      403
+    );
+  }
+
+  const token = signToken({
+    userId: user._id.toString(),
+    email: user.email,
+    role: user.role,
+  });
+
+  return { token, user: toPublicUser(user) };
+};
+
+// ============================================================
+//  getUserById
+// ============================================================
+
+/**
+ * Read a user by their ID and return the client-safe projection.
+ *
+ * Returns `null` when no user with that ID exists. The caller is
+ * responsible for converting the null into whatever response is
+ * appropriate for their endpoint — the `/me` route turns it into
+ * a 404, but a caller that treats "no user" as an expected state
+ * (an idempotent delete, for example) can consume the null
+ * directly.
+ *
+ * The function does NOT catch cast errors from a malformed ID.
+ * A non-hexadecimal string reaching `findById` throws a
+ * `CastError`, and that error propagates to the terminal
+ * middleware, which maps it to a 400. This is deliberate: a
+ * malformed ID is a client error, not a "user not found" case,
+ * and treating the two identically would mask a client bug.
+ *
+ * @param userId - The user ID to look up.
+ */
+export const getUserById = async (
+  userId: string
+): Promise<PublicUser | null> => {
+  const user = await UserModel.findById(userId);
+  if (!user) {
+    return null;
+  }
+  return toPublicUser(user);
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default {
+  loginUser,
+  getUserById,
+};
+</file>
+
+<file path="apps/server/src/features/auth/utils/bcrypt.ts">
+/**
+ * Bcrypt utility module.
+ *
+ * Owns the two operations that every consumer of password hashing
+ * in the WriteSpeare backend needs: hash a plaintext password, and
+ * verify a candidate plaintext against a stored hash. Both are
+ * promise-based wrappers around the native `bcrypt` module, which
+ * exposes its API through a callback shape that does not compose
+ * well with the rest of the codebase's async/await style.
+ *
+ * Design notes:
+ *
+ *   - The salt-round count is declared once, here, and used by
+ *     both operations. When the auth service hashes a new user's
+ *     password, it goes through `hashPassword`; when the same
+ *     password is later verified, it goes through
+ *     `comparePassword`. A single source for the cost factor
+ *     means the two cannot drift apart if the cost is ever
+ *     raised — a mismatch there would produce the same
+ *     login-silently-fails symptom as a wrong algorithm choice.
+ *
+ *   - `comparePassword` returns `false` on any failure rather than
+ *     throwing. A login endpoint must not leak the difference
+ *     between "wrong password" and "malformed hash on disk" — both
+ *     are simply "not this user's password" from the client's
+ *     perspective. A thrown exception would be caught higher up
+ *     and, if handled naively, would produce a 500 instead of a
+ *     401 for the wrong-password case, which is an information
+ *     leak about the user record's state.
+ *
+ *   - `hashPassword` DOES throw on failure. A failure to hash
+ *     means the account cannot be created at all, and the caller
+ *     must know. Silently returning an empty string would write a
+ *     user with an unusable hash — a state the login path would
+ *     then never be able to recover from.
+ */
+
+import bcrypt from 'bcrypt';
+
+// ============================================================
+//  Configuration
+// ============================================================
+
+/**
+ * Cost factor for the bcrypt hashing algorithm.
+ *
+ * Ten is the widely accepted default as of the current state of
+ * commodity hardware: roughly 50–100 ms per hash on a modern CPU,
+ * which is well below the threshold a user would notice during
+ * login and well above the threshold that makes a brute-force
+ * attack against a stolen hash database impractical at scale.
+ *
+ * Raising this value increases both hash time and verification
+ * time linearly in `2^rounds`. Any change here must be paired
+ * with a plan for re-hashing existing users on next login, since
+ * old hashes remain verifiable (bcrypt stores the cost factor in
+ * the hash itself), but new logins would continue to use the old
+ * cost until each user's password is changed.
+ */
+const SALT_ROUNDS = 10;
+
+// ============================================================
+//  Public API
+// ============================================================
+
+/**
+ * Hash a plaintext password.
+ *
+ * Returns the bcrypt hash string, which is safe to store verbatim
+ * in the database. The returned value is salted internally by
+ * bcrypt — no separate salt column exists or is needed, because
+ * the salt is embedded in the hash string itself.
+ *
+ * Throws on any failure (invalid input, entropy unavailable on
+ * the host, native module misbehaviour). Callers must treat a
+ * throw here as a fatal error for the operation in progress:
+ * the user record cannot be safely created.
+ *
+ * @param plainText - The user-supplied password.
+ */
+export const hashPassword = async (plainText: string): Promise<string> => {
+  try {
+    const salt = await bcrypt.genSalt(SALT_ROUNDS);
+    const hash = await bcrypt.hash(plainText, salt);
+    return hash;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to hash password: ${reason}`);
+  }
+};
+
+/**
+ * Verify a candidate plaintext password against a stored bcrypt
+ * hash.
+ *
+ * Returns `true` when the candidate matches, `false` in every
+ * other case — a mismatched password, a malformed or truncated
+ * hash stored on disk, or an unexpected error from the native
+ * module. The uniform `false` response is deliberate: a login
+ * endpoint must not distinguish between these cases in its
+ * response, so the helper does not expose the distinction either.
+ *
+ * Never throws. A caller that writes `if (await comparePassword(…))`
+ * never has to guard against an exception, which keeps the auth
+ * flow linear and easy to reason about.
+ *
+ * @param plainText - The candidate password from the login form.
+ * @param hashed    - The stored hash from the user document.
+ */
+export const comparePassword = async (
+  plainText: string,
+  hashed: string
+): Promise<boolean> => {
+  try {
+    return await bcrypt.compare(plainText, hashed);
+  } catch {
+    return false;
+  }
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default {
+  hashPassword,
+  comparePassword,
+};
+</file>
+
+<file path="apps/server/src/features/auth/utils/jwt.ts">
+/**
+ * JWT utility module.
+ *
+ * Produces and verifies the authentication tokens that the
+ * backend issues at login and consumes on every protected route.
+ * The token payload is intentionally narrow — user ID, email,
+ * role — because every byte inside a JWT is client-visible. A
+ * field that is not needed to make an authorisation decision must
+ * not be placed in the token, no matter how convenient that would
+ * be at the call site.
+ *
+ * Secret handling:
+ *
+ *   The signing secret is read from `process.env['JWT_SECRET']`
+ *   exactly once, at module load. If it is absent, empty, or too
+ *   short to be a meaningful secret, the module throws immediately
+ *   so the process fails to start. A server that boots with an
+ *   undefined secret would issue tokens that verify against an
+ *   undefined key — a silent misconfiguration that only surfaces
+ *   as "every login eventually succeeds from any forged token" in
+ *   production. Refusing to start is the correct behaviour.
+ *
+ *   A minimum length check of 32 characters is enforced. The
+ *   underlying HS256 algorithm has a 256-bit key size, which is
+ *   exactly 32 bytes; a shorter secret is under-strength for the
+ *   algorithm and violates the security baseline.
+ *
+ * Expiry:
+ *
+ *   Tokens expire after 7 days by default. The expiry is embedded
+ *   in the token itself (the `exp` claim), so verification is
+ *   stateless and does not require a lookup. The caller may
+ *   override the expiry when signing, but the default is what
+ *   every code path in this application uses.
+ *
+ * Failure semantics:
+ *
+ *   `signToken` throws on failure. A signing failure means the
+ *   server cannot issue a session, which is fatal to the login
+ *   request and must be visible to the caller.
+ *
+ *   `verifyToken` throws on failure. The caller (the auth
+ *   middleware) catches the throw, converts it to a 401 response,
+ *   and distinguishes the expired-token case from the
+ *   invalid-token case in the message it returns. Throwing rather
+ *   than returning `null` keeps the happy path of the middleware
+ *   linear.
+ *
+ *   `decodeToken` never throws — it is a diagnostic helper for
+ *   reading a token's claims without verifying its signature. It
+ *   is not a security boundary and must never be used to
+ *   authorise a request.
+ */
+
+import jwt from 'jsonwebtoken';
+
+// ============================================================
+//  Token payload
+// ============================================================
+
+/**
+ * The set of claims carried inside an issued token.
+ *
+ * Every field here is safe to expose to the client — the client
+ * already knows its own user ID, email, and role. None of them
+ * is a secret. The security of the scheme comes from the
+ * signature, not from the payload's confidentiality.
+ *
+ * `role` is stored as a plain string rather than the `UserRole`
+ * enum from `features/shared/types` to keep this module free of
+ * any dependency on the shared types module. The auth middleware
+ * narrows it back to the enum when it needs to. A string that
+ * happens to be `"admin"` or `"user"` behaves identically to the
+ * enum value at runtime, and the middleware is the single place
+ * where the closed set is enforced.
+ */
+export interface TokenPayload {
+  userId: string;
+  email: string;
+  role: string;
+}
+
+// ============================================================
+//  Secret resolution and validation
+// ============================================================
+
+/**
+ * Minimum acceptable secret length, in characters.
+ *
+ * Twenty-four is the number of bytes in a 256-bit key when
+ * represented as a base64 string with padding (`32 * 4 / 3 ≈ 43`
+ * for base64, but a hex string uses two characters per byte and
+ * needs 64). Rather than enforce a specific encoding, the check
+ * is a lower bound on the raw string length: any secret that is
+ * at least 32 characters long is sufficient regardless of
+ * encoding. Secrets shorter than that are rejected outright —
+ * they are either the default placeholder from the example env
+ * file, a truncated paste, or an empty value that slipped through
+ * validation.
+ */
+const MIN_SECRET_LENGTH = 32;
+
+/**
+ * Read and validate the JWT signing secret from the environment.
+ *
+ * Called exactly once, at module load. Throws a descriptive error
+ * if the secret is missing or too short, which stops the process
+ * before any request handler is registered. This is deliberate:
+ * a server that starts with a broken secret is worse than a
+ * server that refuses to start, because the failure it produces
+ * at runtime is silent and security-critical.
+ */
+const resolveSecret = (): string => {
+  const value = process.env['JWT_SECRET'];
+
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(
+      'JWT_SECRET is not set. Set it in the server .env file before starting.'
+    );
+  }
+
+  if (value.length < MIN_SECRET_LENGTH) {
+    throw new Error(
+      `JWT_SECRET must be at least ${MIN_SECRET_LENGTH} characters. ` +
+        `The current value is ${value.length} characters long.`
+    );
+  }
+
+  return value;
+};
+
+/**
+ * The validated secret, resolved once at module load. Every
+ * signing and verification call in this file uses this constant —
+ * the environment is not read again, so a runtime mutation of
+ * `process.env['JWT_SECRET']` cannot desynchronise the signing
+ * and verification keys.
+ */
+const JWT_SECRET = resolveSecret();
+
+// ============================================================
+//  Expiry
+// ============================================================
+
+/**
+ * Default token lifetime. Seven days is long enough that a user
+ * who opens the app weekly is never forced to log in again, and
+ * short enough that a stolen token has a bounded window of
+ * usefulness. The desktop client's own persistent Chrome profile
+ * covers the "remember me forever" case by keeping the session
+ * alive across restarts, so the token lifetime only needs to
+ * cover active sessions.
+ */
+const DEFAULT_EXPIRES_IN = '7d';
+
+// ============================================================
+//  Public API
+// ============================================================
+
+/**
+ * Sign a token payload into a JWT string.
+ *
+ * The returned string is safe to send to the client and back. It
+ * is NOT encrypted — the payload is base64-encoded, not
+ * encrypted, and a client can read it. That is expected; the
+ * signature is what prevents the client from modifying it.
+ *
+ * Throws on any failure. The caller (the auth service) treats a
+ * throw here as fatal for the login request — an issued session
+ * is a precondition for a successful response.
+ *
+ * @param payload   - The claims to embed. See `TokenPayload`.
+ * @param expiresIn - Optional override of the default lifetime.
+ *                    Accepts any value the `jsonwebtoken` library
+ *                    understands: a number of seconds, or a
+ *                    duration string such as `'1h'`, `'30d'`.
+ */
+export const signToken = (
+  payload: TokenPayload,
+  expiresIn: jwt.SignOptions['expiresIn'] = DEFAULT_EXPIRES_IN
+): string => {
+  try {
+    return jwt.sign(payload, JWT_SECRET, { expiresIn });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to sign token: ${reason}`);
+  }
+};
+
+/**
+ * Verify a token string and return its decoded payload.
+ *
+ * Performs a full signature and expiry check. Throws on any
+ * failure — a wrong signature, a malformed token, an expired
+ * token, or a token signed with a different algorithm. The
+ * `jsonwebtoken` library distinguishes these cases by the `name`
+ * field on the thrown error:
+ *
+ *   - `TokenExpiredError`   — the token was valid, but its `exp`
+ *                             claim is in the past.
+ *   - `JsonWebTokenError`   — the token is malformed, its
+ *                             signature does not match, or its
+ *                             algorithm does not match the
+ *                             signing algorithm.
+ *
+ * The caller decides how to respond; this function does not
+ * swallow the distinction.
+ *
+ * The return type is asserted to `TokenPayload` because the
+ * `jsonwebtoken` library types the decoded result as
+ * `string | JwtPayload`. A well-signed token always decodes to an
+ * object, so the assertion is safe — a token that decodes to a
+ * string would have to have been signed by a code path that is
+ * not present in this application.
+ *
+ * @param token - The JWT string from the client.
+ */
+export const verifyToken = (token: string): TokenPayload => {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload;
+    return decoded;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to verify token: ${reason}`);
+  }
+};
+
+/**
+ * Decode a token's payload WITHOUT verifying its signature.
+ *
+ * This is a diagnostic helper, not a security boundary. It exists
+ * for two narrow use cases:
+ *
+ *   1. The auth middleware wants to log the user ID from an
+ *      incoming token before it decides whether to accept it. The
+ *      log is useful regardless of whether verification later
+ *      succeeds.
+ *
+ *   2. The client's own session-restore path may want to read the
+ *      expiry of its stored token to decide whether to attempt a
+ *      refresh before making a request.
+ *
+ * It must NEVER be used to authorise a request. A token whose
+ * signature has not been verified is attacker-controlled data,
+ * and treating it as trusted is exactly how authentication
+ * bypasses happen.
+ *
+ * Returns `null` on any failure (malformed token, unexpected
+ * shape) rather than throwing, because the callers above are
+ * diagnostic paths that should degrade gracefully.
+ *
+ * @param token - The JWT string.
+ */
+export const decodeToken = (token: string): TokenPayload | null => {
+  try {
+    const decoded = jwt.decode(token);
+    if (typeof decoded !== 'object' || decoded === null) {
+      return null;
+    }
+    return decoded as TokenPayload;
+  } catch {
+    return null;
+  }
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default {
+  signToken,
+  verifyToken,
+  decodeToken,
+};
+</file>
+
+<file path="apps/server/src/features/auth/index.ts">
+
+</file>
+
+<file path="apps/server/src/features/documents/controllers/documentController.ts">
+
+</file>
+
+<file path="apps/server/src/features/documents/models/Document.ts">
+
+</file>
+
+<file path="apps/server/src/features/documents/routes/documentRoutes.ts">
+
+</file>
+
+<file path="apps/server/src/features/documents/services/documentService.ts">
+
+</file>
+
+<file path="apps/server/src/features/documents/index.ts">
+
+</file>
+
+<file path="apps/server/src/features/reports/controllers/reportController.ts">
+
+</file>
+
+<file path="apps/server/src/features/reports/models/Report.ts">
+
+</file>
+
+<file path="apps/server/src/features/reports/routes/reportRoutes.ts">
+
+</file>
+
+<file path="apps/server/src/features/reports/services/reportService.ts">
+
+</file>
+
+<file path="apps/server/src/features/reports/index.ts">
+
+</file>
+
+<file path="apps/server/src/features/settings/controllers/settingsController.ts">
+
+</file>
+
+<file path="apps/server/src/features/settings/models/Preset.ts">
+
+</file>
+
+<file path="apps/server/src/features/settings/models/UserSetting.ts">
+
+</file>
+
+<file path="apps/server/src/features/settings/routes/settingsRoutes.ts">
+
+</file>
+
+<file path="apps/server/src/features/settings/services/settingsService.ts">
+
+</file>
+
+<file path="apps/server/src/features/settings/index.ts">
+
+</file>
+
+<file path="apps/server/src/features/shared/config/db.ts">
+/**
+ * MongoDB connection module.
+ *
+ * Exposes a process-wide singleton connection to the WriteSpeare
+ * database, shared by both the local Node server entry point and
+ * the Vercel serverless entry point. The singleton contract is
+ * important because a serverless platform can invoke the handler
+ * many times per process — reconnecting on every invocation would
+ * exhaust the connection pool and add hundreds of milliseconds of
+ * latency to each request.
+ *
+ * The connection URI is read lazily, at the moment `connectDB()`
+ * is first called rather than at module load. This is deliberate:
+ * environment variables are populated by `dotenv/config` before
+ * the server boots, but ES module imports are evaluated in
+ * declaration order, so a module-level read of `process.env` would
+ * race the dotenv side effect if the import graph is ever
+ * reorganised. Reading on demand removes that class of bug
+ * entirely.
+ */
+
+import mongoose from 'mongoose';
+
+// ============================================================
+//  Configuration
+// ============================================================
+
+/**
+ * Fallback URI used when `MONGODB_URI` is absent from the
+ * environment. This is the correct default for a developer running
+ * a local `mongod` instance; production deployments must set the
+ * env var explicitly and will fail loudly at startup if they do
+ * not, because the fallback points at a database that does not
+ * exist on the deployed machine.
+ */
+const DEFAULT_MONGODB_URI = 'mongodb://localhost:27017/writespeare';
+
+/**
+ * Connection options applied to every `mongoose.connect()` call.
+ *
+ * Each option is chosen for a specific reason:
+ *
+ *   autoIndex — builds schema indexes automatically on first
+ *               connect. Safe for this application because the
+ *               collections are small and index creation is a
+ *               one-time cost. A larger deployment would flip
+ *               this off and build indexes out of band.
+ *
+ *   maxPoolSize — upper bound on concurrent sockets to MongoDB.
+ *                 Ten is well above the concurrent-query ceiling
+ *                 of this application; a higher value would let a
+ *                 single runaway request starve the pool without
+ *                 buying any throughput.
+ *
+ *   serverSelectionTimeoutMS — how long the driver waits for a
+ *                 reachable primary before giving up. Five seconds
+ *                 is short enough that a misconfigured URI fails
+ *                 fast during startup, long enough to survive a
+ *                 brief network blip on the way up.
+ *
+ *   socketTimeoutMS — per-socket inactivity timeout. Forty-five
+ *                 seconds is the driver default and is generous
+ *                 enough that a slow aggregate query does not get
+ *                 killed mid-flight.
+ *
+ *   family — pin the driver to IPv4. Some Node builds resolve
+ *                 `localhost` to `::1` first, and the default
+ *                 `mongod` listener binds only to IPv4. Pinning
+ *                 to 4 avoids the resolution-order surprise on
+ *                 those machines.
+ */
+const MONGOOSE_OPTIONS: mongoose.ConnectOptions = {
+  autoIndex: true,
+  maxPoolSize: 10,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+  family: 4,
+};
+
+// ============================================================
+//  Internal state
+// ============================================================
+
+/**
+ * Tracks whether the module believes the connection is live.
+ *
+ * Kept separate from `mongoose.connection.readyState` because the
+ * readyState reflects the driver's view, not ours — it flips to
+ * `disconnected` on transient errors that our reconnect logic
+ * should retry transparently, and it can lag a manual
+ * `disconnect()` by a tick. This boolean is the authoritative
+ * answer to "did WE open a connection that WE are responsible
+ * for closing?".
+ *
+ * Mutated only by `connectDB`, `disconnectDB`, and the driver's
+ * own lifecycle event handlers below. Not exported — callers that
+ * need to know the connection state use `isDBConnected()`, which
+ * consults the driver directly and therefore cannot be fooled by
+ * this flag drifting out of sync.
+ */
+let isConnected = false;
+
+// ============================================================
+//  Internal helpers
+// ============================================================
+
+/**
+ * Resolve the connection URI to use for this process.
+ *
+ * Returns the `MONGODB_URI` environment variable if it is a
+ * non-empty, non-whitespace string. Otherwise returns the
+ * development fallback. The whitespace check guards against a
+ * misconfigured `.env` file where the key exists but the value is
+ * empty or a placeholder, which would otherwise cause the driver
+ * to attempt a connection to an empty hostname.
+ */
+const resolveMongoUri = (): string => {
+  const fromEnv = process.env['MONGODB_URI'];
+  if (typeof fromEnv === 'string' && fromEnv.trim().length > 0) {
+    return fromEnv;
+  }
+  return DEFAULT_MONGODB_URI;
+};
+
+// ============================================================
+//  Public API
+// ============================================================
+
+/**
+ * Establish the process-wide MongoDB connection.
+ *
+ * Idempotent: calling this a second time on a live connection is
+ * a no-op that returns immediately. Calling it after a failed
+ * previous attempt retries from a clean state — the driver is
+ * disconnected first so the pool is rebuilt rather than reused
+ * with a corrupted handshake.
+ *
+ * Throws on connection failure. Callers at the top of the app
+ * (`src/index.ts` and `handler/index.ts`) treat that as fatal,
+ * log the error, and exit with a non-zero code rather than
+ * serving requests against an unavailable database.
+ */
+export const connectDB = async (): Promise<void> => {
+  if (isConnected) {
+    console.log('MongoDB: already connected, reusing existing connection');
+    return;
+  }
+
+  // The driver may hold a half-open connection from a previous
+  // attempt that failed after the TCP handshake but before the
+  // driver marked itself ready. Disconnect first so the next
+  // `connect()` starts from a truly blank slate.
+  if (mongoose.connection.readyState !== 0) {
+    console.log('MongoDB: stale connection state detected, resetting');
+    await mongoose.disconnect();
+  }
+
+  try {
+    console.log('MongoDB: connecting...');
+    await mongoose.connect(resolveMongoUri(), MONGOOSE_OPTIONS);
+    isConnected = true;
+    console.log('MongoDB: connected');
+  } catch (error) {
+    console.error('MongoDB: connection failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Close the process-wide MongoDB connection.
+ *
+ * Idempotent: calling this when no connection is open is a no-op
+ * that logs and returns. Throws on a disconnect failure — that
+ * path indicates the socket is in an unrecoverable state and the
+ * caller should treat it the same as a failed connect.
+ *
+ * Used by the shutdown path (see the signal handlers at the
+ * bottom of this file) and by tests that need to reset connection
+ * state between cases.
+ */
+export const disconnectDB = async (): Promise<void> => {
+  if (!isConnected) {
+    console.log('MongoDB: not connected, skipping disconnect');
+    return;
+  }
+
+  try {
+    await mongoose.disconnect();
+    isConnected = false;
+    console.log('MongoDB: disconnected');
+  } catch (error) {
+    console.error('MongoDB: disconnect failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Report whether the driver currently holds an open connection.
+ *
+ * Reads `mongoose.connection.readyState` directly rather than the
+ * module-level `isConnected` flag. This is intentional — the
+ * readyState is the driver's own truth, and consumers that use
+ * this for a health check or a route guard need the driver's
+ * answer, not ours. A readyState of `1` means "connected",
+ * anything else means "not usable right now".
+ */
+export const isDBConnected = (): boolean => {
+  return mongoose.connection.readyState === 1;
+};
+
+// ============================================================
+//  Connection lifecycle events
+// ============================================================
+//
+// These handlers fire on the driver's own lifecycle transitions,
+// not on our API calls. They exist to:
+//
+//   1. Log every transition, so a disconnect in production is
+//      visible in the server log without instrumenting call sites.
+//
+//   2. Force `isConnected` to `false` whenever the driver reports
+//      an error or a disconnection. Without this, a crashed socket
+//      would leave the module believing it is still connected and
+//      the next `connectDB()` call would return early instead of
+//      reopening the pool.
+
+mongoose.connection.on('connected', () => {
+  console.log('MongoDB: connected event');
+});
+
+mongoose.connection.on('error', (err: Error) => {
+  console.error('MongoDB: connection error event:', err);
+  isConnected = false;
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('MongoDB: disconnected event');
+  isConnected = false;
+});
+
+// ============================================================
+//  Graceful shutdown
+// ============================================================
+//
+// Registering signal handlers on a module import is safe under
+// Node's module cache: the top-level statements run exactly once
+// per process, so the handlers are not duplicated on subsequent
+// imports. In a serverless environment the platform terminates
+// the process without sending SIGTERM, so these handlers are
+// inert there — they exist for the local development and
+// long-running-server cases, where Ctrl+C or a service manager
+// sends the signal before killing the process.
+
+/**
+ * Close the connection and exit. Shared body for both signal
+ * handlers so the shutdown logic lives in one place. Swallows
+ * disconnect errors on the way out — a failure to close cleanly
+ * should not prevent the process from exiting, and there is no
+ * useful recovery at that point.
+ */
+const shutdown = async (signal: string): Promise<void> => {
+  console.log(`MongoDB: received ${signal}, closing connection`);
+  try {
+    await disconnectDB();
+  } catch {
+    // swallow — the process is going down regardless
+  }
+  process.exit(0);
+};
+
+process.on('SIGINT', () => {
+  void shutdown('SIGINT');
+});
+
+process.on('SIGTERM', () => {
+  void shutdown('SIGTERM');
+});
+
+// ============================================================
+//  Raw access re-exports
+// ============================================================
+//
+// Exposed for the two categories of consumer that legitimately
+// need more than the function surface:
+//
+//   - Health checks that want to inspect `connection.readyState`
+//     directly rather than via the boolean probe.
+//
+//   - Tests that need to reset connection state or inspect the
+//     underlying driver.
+
+export const connection = mongoose.connection;
+export { mongoose };
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default {
+  connectDB,
+  disconnectDB,
+  isDBConnected,
+  connection,
+  mongoose,
+};
+</file>
+
+<file path="apps/server/src/features/shared/middleware/errorHandler.ts">
+/**
+ * Error handling middleware for the WriteSpeare backend.
+ *
+ * Centralises three concerns that would otherwise be repeated in
+ * every controller:
+ *
+ *   1. Distinguishing operational errors (a bad request, a
+ *      missing record) from programmer errors (a null reference,
+ *      a broken invariant). Operational errors carry an HTTP
+ *      status code chosen at the throw site; programmer errors
+ *      are treated as 500s and never leak their stack to the
+ *      client in production.
+ *
+ *   2. Translating errors thrown by third-party libraries — the
+ *      Mongoose driver, the JWT verifier — into the same
+ *      response envelope the rest of the API uses. A consumer
+ *      never sees a raw `MongoServerError`; they see
+ *      `{ success: false, error: "…" }` like everything else.
+ *
+ *   3. Providing a single wrapper (`asyncHandler`) that lets
+ *      async route handlers throw without crashing the process
+ *      on an unhandled promise rejection. Express 5 does forward
+ *      rejected promises to `next` automatically, but the wrapper
+ *      remains in place because it also normalises the shape of
+ *      the rejection and because it keeps the call sites explicit
+ *      about the fact that they can throw.
+ *
+ * The response envelope is the `ApiResponse` type from
+ * `features/shared/types`, which every other layer of the
+ * backend also uses. Keeping the shape identical here means a
+ * client can handle every response — success or failure — with
+ * the same unwrapping logic.
+ */
+
+import type { Request, Response, NextFunction } from 'express';
+import type { ApiResponse } from '../types/index.js';
+
+// ============================================================
+//  AppError — operational error
+// ============================================================
+
+/**
+ * An error whose cause is known and whose HTTP status code is
+ * deliberate.
+ *
+ * Throw an `AppError` when the failure is expected and the
+ * correct client response is clear:
+ *
+ *   throw new AppError('Email already registered', 409);
+ *   throw new AppError('Topic not found', 404);
+ *   throw new AppError('Admin privileges required', 403);
+ *
+ * The `isOperational` flag defaults to `true` and is what the
+ * error handler uses to decide whether to log the full stack.
+ * Anything NOT wrapped in an `AppError` is treated as
+ * non-operational — a bug in the code — and logged with its
+ * stack regardless of environment.
+ */
+export class AppError extends Error {
+  public readonly statusCode: number;
+  public readonly isOperational: boolean;
+
+  public constructor(
+    message: string,
+    statusCode: number,
+    isOperational: boolean = true
+  ) {
+    super(message);
+    this.statusCode = statusCode;
+    this.isOperational = isOperational;
+
+    // Restore the prototype chain. TypeScript's class-emit for a
+    // subclass of `Error` breaks `instanceof` without this call on
+    // some target/module combinations, because the emit produces a
+    // plain function rather than a true subclass. The `Object.setPrototypeOf`
+    // form is the portable fix across Node versions.
+    Object.setPrototypeOf(this, AppError.prototype);
+
+    // Capture the stack, but only for non-operational errors. An
+    // operational error is thrown at a known site, so its stack
+    // adds noise to logs without adding diagnostic value. A
+    // non-operational error is a bug — its stack is the whole point.
+    if (!isOperational) {
+      Error.captureStackTrace(this, this.constructor);
+    }
+  }
+}
+
+// ============================================================
+//  Known error shapes from third-party libraries
+// ============================================================
+
+/**
+ * Mongoose wraps schema-level validation failures in a
+ * `ValidationError` — one entry per invalid path. The `errors`
+ * map is part of the library's public shape but is not typed on
+ * the base `Error`. Narrowing to this shape lets the handler
+ * extract the first human-readable message without a `any` cast.
+ */
+interface MongooseValidationErrorShape {
+  name: 'ValidationError';
+  message: string;
+  errors?: Record<string, { message?: string }>;
+}
+
+/**
+ * Duplicate-key errors come back from the driver as a plain Error
+ * with a numeric `code` of 11000 and a `keyPattern` map naming
+ * the offending field. Same treatment as the validation shape —
+ * a local narrowing interface so the handler reads cleanly.
+ */
+interface MongoDuplicateKeyErrorShape {
+  code: number;
+  keyPattern?: Record<string, unknown>;
+}
+
+/**
+ * Type guard for the Mongoose validation error. Checks by name
+ * rather than by `instanceof` because the class is not imported —
+ * importing it would pull a runtime dependency into this module
+ * purely for a check, and the name match is how Mongoose itself
+ * distinguishes the error in its own internals.
+ */
+const isMongooseValidationError = (
+  err: unknown
+): err is MongooseValidationErrorShape => {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { name?: unknown }).name === 'ValidationError'
+  );
+};
+
+/**
+ * Type guard for the Mongo duplicate-key error.
+ */
+const isMongoDuplicateKeyError = (
+  err: unknown
+): err is MongoDuplicateKeyErrorShape => {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    typeof (err as { code?: unknown }).code === 'number' &&
+    (err as { code: number }).code === 11000
+  );
+};
+
+/**
+ * Type guard for a JWT verification failure. `jsonwebtoken` throws
+ * errors with a `.name` of either `JsonWebTokenError` (malformed
+ * or wrong signature) or `TokenExpiredError` (valid but past its
+ * `exp`). Both are 401 responses from the client's perspective,
+ * but the messages differ, so we distinguish them.
+ */
+const isJwtError = (
+  err: unknown
+): err is { name: 'JsonWebTokenError' | 'TokenExpiredError' } => {
+  if (typeof err !== 'object' || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  return name === 'JsonWebTokenError' || name === 'TokenExpiredError';
+};
+
+/**
+ * Type guard for a Mongoose `CastError`. Thrown when a value
+ * cannot be cast to the type the schema expects — most commonly
+ * when a route parameter that should be an ObjectId is not a
+ * valid hex string. The cast failure is a client error, not a
+ * server error, so it maps to 400.
+ */
+const isCastError = (
+  err: unknown
+): err is { name: 'CastError'; message: string } => {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { name?: unknown }).name === 'CastError'
+  );
+};
+
+// ============================================================
+//  Terminal error middleware
+// ============================================================
+
+/**
+ * Express error-handling middleware.
+ *
+ * Express identifies an error handler by the arity of the function
+ * — four parameters. The signature here is deliberate and must
+ * not be shortened. The `_next` parameter is unused but required
+ * for Express to recognise the function as an error handler.
+ *
+ * Behaviour:
+ *
+ *   1. Start with a 500 / non-operational default.
+ *   2. If the error is an `AppError`, honour its status code and
+ *      operational flag.
+ *   3. If the error matches a known third-party shape (Mongoose
+ *      validation, duplicate key, JWT, cast), translate it into
+ *      a friendly message and the correct 4xx status.
+ *   4. Log the error. Operational errors log a single line; non-
+ *      operational errors log the full stack regardless of
+ *      environment.
+ *   5. Send the response using the shared `ApiResponse` envelope.
+ *      In production, the response body never includes a stack
+ *      trace. In development, the stack is added to the `message`
+ *      field so it surfaces in the client without a second log
+ *      dive.
+ */
+export const errorHandler = (
+  err: Error | AppError,
+  _req: Request,
+  res: Response<ApiResponse<null>>,
+  _next: NextFunction
+): void => {
+  let statusCode = 500;
+  let message = err.message || 'Internal server error';
+  let isOperational = false;
+
+  // ---- 1. AppError: respect the throw site's intent ----
+  if (err instanceof AppError) {
+    statusCode = err.statusCode;
+    isOperational = err.isOperational;
+  }
+
+  // ---- 2. Mongoose validation ----
+  else if (isMongooseValidationError(err)) {
+    statusCode = 400;
+    const firstError = err.errors
+      ? Object.values(err.errors)[0]
+      : undefined;
+    message =
+      firstError?.message ??
+      err.message ??
+      'Validation failed';
+  }
+
+  // ---- 3. Mongo duplicate key ----
+  else if (isMongoDuplicateKeyError(err)) {
+    statusCode = 409;
+    const field = err.keyPattern
+      ? Object.keys(err.keyPattern)[0]
+      : undefined;
+    message = field
+      ? `Duplicate value for field "${field}".`
+      : 'Duplicate value.';
+  }
+
+  // ---- 4. JWT verification failures ----
+  else if (isJwtError(err)) {
+    statusCode = 401;
+    message =
+      err.name === 'TokenExpiredError'
+        ? 'Session expired. Please log in again.'
+        : 'Invalid authentication token.';
+  }
+
+  // ---- 5. Mongoose cast errors (bad ObjectId etc.) ----
+  else if (isCastError(err)) {
+    statusCode = 400;
+    message = 'Invalid identifier format.';
+  }
+
+  // ---- Log ----
+  // Operational errors are expected at their throw sites and get a
+  // concise log line. Non-operational errors are programming bugs
+  // and always log the full stack, in every environment. The log
+  // is not what the client sees — the response below is.
+  if (!isOperational || process.env['NODE_ENV'] !== 'production') {
+    console.error('Error:', err);
+  }
+
+  // ---- Response body ----
+  const body: ApiResponse<null> = {
+    success: false,
+    error: message,
+  };
+
+  // In development, append the stack so the client-side error
+  // toast carries enough detail for the developer to locate the
+  // bug without tailing the server log. Never in production.
+  if (process.env['NODE_ENV'] === 'development') {
+    body.message = err.stack ?? message;
+  }
+
+  res.status(statusCode).json(body);
+};
+
+// ============================================================
+//  404 handler
+// ============================================================
+
+/**
+ * Terminal middleware that runs when no route matched. Registered
+ * after every real route so it only fires on unmatched paths.
+ *
+ * The message includes the method and URL so a client developer
+ * can see exactly what was requested. The URL is echoed back, not
+ * the raw request headers, so no sensitive data leaves the
+ * response.
+ */
+export const notFoundHandler = (
+  req: Request,
+  res: Response<ApiResponse<null>>,
+  _next: NextFunction
+): void => {
+  const body: ApiResponse<null> = {
+    success: false,
+    error: `Route ${req.method} ${req.originalUrl} not found`,
+  };
+  res.status(404).json(body);
+};
+
+// ============================================================
+//  asyncHandler — safe wrapper for async route handlers
+// ============================================================
+
+/**
+ * Wraps an async Express handler so that a rejected promise is
+ * forwarded to `next` instead of becoming an unhandled rejection.
+ *
+ * Express 5 does forward a rejected promise returned from a route
+ * handler to the error middleware automatically. This wrapper is
+ * still used because:
+ *
+ *   1. It keeps the call sites explicit about the fact that they
+ *      can throw. A reader scanning a route file sees
+ *      `asyncHandler(async (req, res) => { … })` and immediately
+ *      knows the body is a promise-returning function whose
+ *      rejections are handled.
+ *
+ *   2. It normalises the shape of the rejection. Non-Error
+ *      rejections (a raw string, a plain object) are wrapped in
+ *      an `Error` so the terminal handler never has to guard
+ *      against `err.message` being undefined.
+ *
+ *   3. It keeps the code portable across Express versions. If a
+ *      future release stops forwarding rejections, this wrapper
+ *      continues to work without a code change.
+ *
+ * The generic signature preserves the handler's parameter types
+ * and return type, so wrapping a handler does not widen its
+ * signature or lose the type information of `req` and `res`.
+ */
+export const asyncHandler = <
+  P = Record<string, string>,
+  ResBody = unknown,
+  ReqBody = unknown,
+  ReqQuery = Record<string, string>,
+>(
+  fn: (
+    req: Request<P, ResBody, ReqBody, ReqQuery>,
+    res: Response<ResBody>,
+    next: NextFunction
+  ) => Promise<unknown> | unknown
+): ((
+  req: Request<P, ResBody, ReqBody, ReqQuery>,
+  res: Response<ResBody>,
+  next: NextFunction
+) => void) => {
+  return (req, res, next): void => {
+    Promise.resolve(fn(req, res, next)).catch((err: unknown) => {
+      // Normalise non-Error rejections into an Error so the
+      // terminal handler can rely on `err.message` being present.
+      if (err instanceof Error) {
+        next(err);
+      } else {
+        next(new Error(typeof err === 'string' ? err : 'Unknown error'));
+      }
+    });
+  };
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default {
+  AppError,
+  errorHandler,
+  notFoundHandler,
+  asyncHandler,
+};
+</file>
+
+<file path="apps/server/src/features/shared/middleware/rateLimit.ts">
+
+</file>
+
+<file path="apps/server/src/features/shared/middleware/validate.ts">
+
+</file>
+
+<file path="apps/server/src/features/shared/types/index.ts">
+/**
+ * Shared domain types for the WriteSpeare backend.
+ *
+ * This module is the single source of truth for every domain
+ * shape, payload, and API envelope used across the server. It is
+ * intentionally dependency-free at runtime — the only external
+ * reference is a type-only import of Mongoose's `ObjectId`, which
+ * the compiler resolves without emitting a require. That keeps the
+ * module safe to import from any layer (models, services,
+ * controllers, routes, utilities) without triggering circular
+ * dependency warnings.
+ *
+ * Naming conventions applied throughout:
+ *   - Domain entities use PascalCase noun names (`Topic`, `Article`).
+ *   - "Payload" suffix marks an input shape (create or update),
+ *     always distinct from the entity it maps to.
+ *   - "Report" is used both as a noun (the entity) and as a
+ *     compound field name inside `Report` — the ambiguity is
+ *     resolved by the capitalisation: `Report` is the entity,
+ *     `readability`, `seo`, etc. are sections inside it.
+ *   - Status unions are string literal types, not enums, so they
+ *     serialise naturally to JSON and match the strings written
+ *     by the Python validators without a runtime conversion step.
+ */
+
+// ============================================================
+//  Mongoose type helper
+// ============================================================
+
+/**
+ * The runtime type Mongoose uses for `_id` on documents that do
+ * not declare a custom `_id`. Aliased here so every interface
+ * reads `_id: MongoId` instead of repeating the dynamic import
+ * syntax, and so a future migration to a different ODM has a
+ * single point of change.
+ *
+ * The `string` half of the union covers the JSON-serialised form
+ * that leaves the backend via `res.json()` — the wire format is a
+ * string, but inside the process the value is an ObjectId.
+ */
+export type MongoId = string | import('mongoose').Types.ObjectId;
+
+// ============================================================
+//  API response envelopes
+// ============================================================
+
+/**
+ * Every API response — success or failure — flows through this
+ * envelope. The `success` flag is the discriminator; on `true`,
+ * `data` carries the payload; on `false`, `error` carries a
+ * human-readable message. `message` is reserved for optional
+ * non-fatal context (e.g. "Synced 42 records") that a caller may
+ * surface as a toast without treating the response as a failure.
+ *
+ * `T` defaults to `unknown` rather than `any` so call sites that
+ * do not specify a payload type are forced to narrow before
+ * accessing fields. In practice every handler specifies `T`
+ * explicitly.
+ */
+export interface ApiResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  message?: string;
+  error?: string;
+}
+
+/**
+ * Standard shape for list endpoints that support pagination.
+ * `totalPages` is precomputed here rather than left to the client
+ * so the UI can render a pager without a second round trip.
+ */
+export interface PaginatedResponse<T = unknown> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+// ============================================================
+//  User & Authentication
+// ============================================================
+
+/**
+ * Access level of a user account.
+ *
+ *   ADMIN — super-admin. Full access to user management and
+ *           global configuration endpoints.
+ *   USER  — regular user. Access restricted to their own topics,
+ *           documents, articles, reports, and settings.
+ */
+export enum UserRole {
+  ADMIN = 'admin',
+  USER = 'user',
+}
+
+/**
+ * The canonical user record as stored in MongoDB. `passwordHash`
+ * is present on the entity but must never be returned over the
+ * wire — every controller strips it before serialising, and the
+ * model marks the field `select: false` so a naive `.find()`
+ * omits it by default.
+ */
+export interface User {
+  _id: MongoId;
+  email: string;
+  passwordHash: string;
+  role: UserRole;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Input shape for creating a user. `password` is the plaintext
+ * that the auth service hashes before persisting. `role` and
+ * `active` default to `USER` and `true` respectively when omitted.
+ */
+export interface UserCreatePayload {
+  email: string;
+  password: string;
+  role?: UserRole;
+  active?: boolean;
+}
+
+/**
+ * Input shape for updating a user. Every field is optional — the
+ * service merges the patch onto the existing document. If
+ * `password` is provided it is hashed; if omitted, the existing
+ * hash is preserved unchanged.
+ */
+export interface UserUpdatePayload {
+  email?: string;
+  password?: string;
+  role?: UserRole;
+  active?: boolean;
+}
+
+/**
+ * Login request body. Accepted by `POST /api/auth/login`.
+ */
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+/**
+ * Login response body. The `user` object here is the same shape
+ * the `/api/auth/me` endpoint returns — a projection of `User`
+ * with `passwordHash` removed.
+ */
+export interface LoginResponse {
+  user: Omit<User, 'passwordHash'>;
+  token: string;
+}
+
+// ============================================================
+//  Topic (the unit of work for a single article)
+// ============================================================
+
+/**
+ * Lifecycle state of a topic.
+ *
+ *   draft        — created, no work started.
+ *   researching  — search step in flight.
+ *   extracting   — source documents being fetched.
+ *   extracted    — docs on disk, awaiting writer step.
+ *   writing      — DeepSeek automation in flight.
+ *   validating   — validation step in flight.
+ *   completed    — article exists, report exists, ready to export.
+ *   failed       — last step ended in an unrecoverable error;
+ *                  the `error` field on the topic carries details.
+ */
+export type TopicStatus =
+  | 'draft'
+  | 'researching'
+  | 'extracting'
+  | 'extracted'
+  | 'writing'
+  | 'validating'
+  | 'completed'
+  | 'failed';
+
+/**
+ * Identifier for a preset bundle. The three named values are the
+ * system presets shipped with the app. `custom` is used when the
+ * user has built their own preset; the actual override values
+ * live in the `Preset` document keyed by `name`.
+ */
+export type PresetName = 'quick' | 'balanced' | 'deep' | 'custom';
+
+/**
+ * Content profile — controls tone, structure, and default
+ * length that the prompt template will target.
+ */
+export type ProfileName =
+  | 'blog-post'
+  | 'news-article'
+  | 'product-review'
+  | 'academic';
+
+/**
+ * A single topic — the atomic unit of work in WriteSpeare.
+ * One topic owns one pipeline: search → extraction → writing →
+ * validation → export. Every document, article, and report
+ * references its owning topic by `_id`.
+ *
+ * All ownership is enforced by `userId`: a user can only see or
+ * mutate topics where `topic.userId === req.user.userId`.
+ */
+export interface Topic {
+  _id: MongoId;
+  userId: MongoId;
+  title: string;
+  keywords: string[];
+  preset: PresetName;
+  profile: ProfileName;
+  promptFile: string;
+  wordCount: number;
+  sourceCount: number;
+  status: TopicStatus;
+  /** Populated only when `status === 'failed'`. */
+  error?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Input shape for creating a topic. `userId` is derived from the
+ * authenticated request, never from the payload — a caller cannot
+ * create a topic on behalf of another user.
+ */
+export interface TopicCreatePayload {
+  title: string;
+  keywords?: string[];
+  preset?: PresetName;
+  profile?: ProfileName;
+  promptFile?: string;
+  wordCount?: number;
+  sourceCount?: number;
+}
+
+/**
+ * Input shape for updating a topic. Every field is optional; the
+ * service merges. `userId` and `createdAt` are immutable and are
+ * not part of this payload by construction.
+ */
+export interface TopicUpdatePayload {
+  title?: string;
+  keywords?: string[];
+  preset?: PresetName;
+  profile?: ProfileName;
+  promptFile?: string;
+  wordCount?: number;
+  sourceCount?: number;
+  status?: TopicStatus;
+  error?: string;
+}
+
+// ============================================================
+//  Document (one scraped source page)
+// ============================================================
+
+/**
+ * A single scraped source page attached to a topic. `content` is
+ * the extracted Markdown body of the page (with YAML frontmatter
+ * already stripped by the extraction pipeline), sized at a few
+ * kilobytes in the common case and capped at ~20 KB by the
+ * extractor's word-count guard.
+ *
+ * `platform` is a short slug identifying the source site
+ * (`'reddit'`, `'quora'`, `'medium'`, `'generic'`). The renderer
+ * uses it to badge each document in the list.
+ */
+export interface Document {
+  _id: MongoId;
+  topicId: MongoId;
+  userId: MongoId;
+  url: string;
+  platform: string;
+  title: string;
+  content: string;
+  wordCount: number;
+  fetchedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Input shape for persisting a scraped document. `userId` is
+ * derived from the request; `_id`, `createdAt`, and `updatedAt`
+ * are set by Mongoose.
+ */
+export interface DocumentCreatePayload {
+  topicId: MongoId;
+  url: string;
+  platform: string;
+  title: string;
+  content: string;
+  wordCount: number;
+  fetchedAt: Date;
+}
+
+// ============================================================
+//  Article (the generated output)
+// ============================================================
+
+/**
+ * Lifecycle state of a generated article.
+ *
+ *   draft     — the article as first returned by the writer.
+ *   validated — a report has been produced against it.
+ *   exported  — the user has exported it to a file.
+ */
+export type ArticleStatus = 'draft' | 'validated' | 'exported';
+
+/**
+ * A generated article. `version` starts at 1 and increments each
+ * time the user requests a regeneration of the same topic; the
+ * highest-version article is the "current" one. The `content`
+ * field holds the Markdown text with the H1 title preserved.
+ */
+export interface Article {
+  _id: MongoId;
+  topicId: MongoId;
+  userId: MongoId;
+  content: string;
+  wordCount: number;
+  version: number;
+  status: ArticleStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Input shape for persisting a generated article. `userId` is
+ * derived from the request; `version` and status defaults are
+ * computed by the service.
+ */
+export interface ArticleCreatePayload {
+  topicId: MongoId;
+  content: string;
+  wordCount: number;
+}
+
+// ============================================================
+//  Report (validation output for one article)
+// ============================================================
+
+/**
+ * Per-section pass/warn/fail classification. Sections that meet
+ * every threshold read as `good`; sections that miss one or more
+ * soft thresholds read as `warning`; sections that miss a hard
+ * threshold read as `fail`.
+ */
+export type ReportStatus = 'good' | 'warning' | 'fail';
+
+/**
+ * Readability section. Values are produced by `textstat` on the
+ * article body (Markdown markup stripped).
+ */
+export interface ReadabilityReport {
+  /** 0–100, higher is easier to read. Plain-English band: 60–70. */
+  fleschReadingEase: number;
+  /** Approximate US school grade level. Target band: 7–9. */
+  fleschKincaidGrade: number;
+  /** Gunning Fog index. Target: under 12. */
+  gunningFog: number;
+  /** SMOG index. Target: under 12. */
+  smogIndex: number;
+  /** Average words per sentence across the article. */
+  avgSentenceLength: number;
+  /** Estimated reading time for an average adult reader, in seconds. */
+  readingTimeSeconds: number;
+  status: ReportStatus;
+}
+
+/**
+ * Structural SEO section. Measures shape, not content quality —
+ * heading counts, paragraph sizes, and the ratio of passive to
+ * active voice.
+ */
+export interface SeoReport {
+  wordCount: number;
+  h2Count: number;
+  h3Count: number;
+  /** Average words per paragraph, split on blank-line boundaries. */
+  avgParagraphWords: number;
+  /** 0–1; fraction of sentences flagged as passive by the parser. */
+  passiveVoicePercent: number;
+  /** 0–1; fraction of sentences containing a transition word. */
+  transitionWordsPercent: number;
+  status: ReportStatus;
+}
+
+/**
+ * Per-keyword placement and density. One of these per keyword the
+ * user supplied on the topic, plus any keyword extracted from the
+ * source corpus and accepted by the user.
+ */
+export interface KeywordReportEntry {
+  keyword: string;
+  priority: 'primary' | 'secondary' | 'supporting';
+  /** Total occurrences in the article body. */
+  count: number;
+  /** `count / wordCount`, expressed as a fraction (0–1). */
+  density: number;
+  /** Whether the keyword appears in the H1 title. */
+  inTitle: boolean;
+  /** Whether the keyword appears in the first 100 words. */
+  inIntro: boolean;
+  /** Number of H2 sections whose heading contains the keyword. */
+  inH2Count: number;
+  status: ReportStatus;
+}
+
+/**
+ * Wrapper around the per-keyword entries so the section carries
+ * its own aggregate status, matching the shape of every other
+ * section in the report.
+ */
+export interface KeywordReport {
+  keywords: KeywordReportEntry[];
+  status: ReportStatus;
+}
+
+/**
+ * One sentence from the generated article that scored above the
+ * configured similarity threshold against one or more source
+ * documents. Rendered in the report so the user can see exactly
+ * which sentences need rewriting if the corrective loop is not
+ * enabled.
+ */
+export interface FlaggedSentence {
+  text: string;
+  /** 0–1; the highest similarity this sentence scored against any source. */
+  similarity: number;
+  /** Human-readable label of the source document it matched. */
+  sourceTitle: string;
+}
+
+/**
+ * Originality section. Two independent similarity signals are
+ * reported side by side: TF-IDF catches lexical overlap, semantic
+ * similarity catches paraphrase.
+ */
+export interface OriginalityReport {
+  /** Highest TF-IDF cosine similarity against any source doc. */
+  maxTfidfSimilarity: number;
+  /** Highest embedding cosine similarity against any source doc. */
+  maxSemanticSimilarity: number;
+  flaggedSentences: FlaggedSentence[];
+  status: ReportStatus;
+}
+
+/**
+ * One overused AI-tell phrase and how many times it appeared.
+ */
+export interface AiMarkerEntry {
+  phrase: string;
+  count: number;
+}
+
+/**
+ * AI-marker section. Counts occurrences of phrases that are
+ * statistically over-represented in LLM output. A count over the
+ * configured threshold is a soft signal to rewrite, not a hard
+ * failure.
+ */
+export interface AiMarkersReport {
+  markerCount: number;
+  markers: AiMarkerEntry[];
+  status: ReportStatus;
+}
+
+/**
+ * One grammatical or stylistic issue raised by LanguageTool.
+ * `offset` and `length` are character positions in the article
+ * body, used by the UI to highlight the offending span.
+ */
+export interface GrammarIssue {
+  ruleId: string;
+  message: string;
+  offset: number;
+  length: number;
+  /** Ordered list of suggested replacement strings. */
+  replacements: string[];
+}
+
+/**
+ * Grammar section. Issue counts over the configured threshold
+ * produce a `warning`; a critical rule violation produces `fail`.
+ */
+export interface GrammarReport {
+  issueCount: number;
+  issues: GrammarIssue[];
+  status: ReportStatus;
+}
+
+/**
+ * The complete validation report for one article. Every section
+ * is required — a report is only written when all six validators
+ * have completed, so a partially-populated report on disk would
+ * indicate a bug in the runner.
+ */
+export interface Report {
+  _id: MongoId;
+  articleId: MongoId;
+  topicId: MongoId;
+  userId: MongoId;
+  readability: ReadabilityReport;
+  seo: SeoReport;
+  keywords: KeywordReport;
+  originality: OriginalityReport;
+  aiMarkers: AiMarkersReport;
+  grammar: GrammarReport;
+  /** The weakest status across all six sections. */
+  overallStatus: ReportStatus;
+  createdAt: Date;
+}
+
+// ============================================================
+//  Preset (a named bundle of pipeline settings)
+// ============================================================
+
+/**
+ * A saved bundle of settings that fully describes how a topic's
+ * pipeline should run. The three system presets ship with the app
+ * and have `userId === null`; user-created presets have the
+ * owning user's ID.
+ *
+ * A preset is self-contained — every field the pipeline reads at
+ * run time is present here, so loading a preset replaces the
+ * entire effective configuration rather than merging with a
+ * global default. That guarantees the same preset produces the
+ * same pipeline behaviour regardless of what else the user has
+ * configured.
+ */
+export interface Preset {
+  _id: MongoId;
+  /** `null` for system presets. */
+  userId: MongoId | null;
+  /** Slug-form identifier: `'quick'`, `'balanced'`, `'deep'`, or a user-chosen slug. */
+  name: string;
+  /** Human-readable label shown in the preset picker. */
+  displayName: string;
+  /** Total sources to fetch per topic. */
+  sourceCount: number;
+  /** Target word count for the generated article. */
+  wordCount: number;
+  /** Search engine identifiers in priority order, e.g. `['google', 'duckduckgo']`. */
+  searchEngines: string[];
+  /** Results to read per search engine page. */
+  resultsPerPage: number;
+  /** Hard cap on total candidate URLs before the search step stops. */
+  maxResults: number;
+  /** Per-page navigation timeout, in milliseconds. */
+  pageLoadTimeout: number;
+  /** Retries per failed page load before the URL is marked as failed. */
+  maxRetries: number;
+  /** Acceptable range for `fleschKincaidGrade`, as `[min, max]`. */
+  targetReadingGrade: [number, number];
+  /** Minimum acceptable keyword density (fraction of word count). */
+  minKeywordDensity: number;
+  /** Maximum acceptable keyword density before flagging as stuffed. */
+  maxKeywordDensity: number;
+  /** Similarity ceiling for the TF-IDF check. */
+  maxTfidfSimilarity: number;
+  /** Similarity ceiling for the semantic check. */
+  maxSemanticSimilarity: number;
+  /** Maximum count of AI-tell phrases before flagging. */
+  maxAiMarkers: number;
+  runReadabilityCheck: boolean;
+  runSeoCheck: boolean;
+  runOriginalityCheck: boolean;
+  runAiMarkerCheck: boolean;
+  runGrammarCheck: boolean;
+  /** When true, the app reruns the writer with a corrective prompt on validation failure. */
+  autoRegenerate: boolean;
+  /** Upper bound on regeneration attempts; prevents an infinite loop. */
+  maxRegenerationAttempts: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Input shape for creating a user preset. `userId` and the
+ * `isSystem` flag are set by the service, not the payload.
+ */
+export interface PresetCreatePayload {
+  name: string;
+  displayName: string;
+  sourceCount: number;
+  wordCount: number;
+  searchEngines: string[];
+  resultsPerPage: number;
+  maxResults: number;
+  pageLoadTimeout: number;
+  maxRetries: number;
+  targetReadingGrade: [number, number];
+  minKeywordDensity: number;
+  maxKeywordDensity: number;
+  maxTfidfSimilarity: number;
+  maxSemanticSimilarity: number;
+  maxAiMarkers: number;
+  runReadabilityCheck: boolean;
+  runSeoCheck: boolean;
+  runOriginalityCheck: boolean;
+  runAiMarkerCheck: boolean;
+  runGrammarCheck: boolean;
+  autoRegenerate: boolean;
+  maxRegenerationAttempts: number;
+}
+
+// ============================================================
+//  User settings (per-user preferences)
+// ============================================================
+
+/**
+ * The user-controlled preferences that apply across every topic.
+ * Per-topic values (keyword list, word count, source count,
+ * preset, profile, prompt file) live on the `Topic` document
+ * itself; this map only holds the choices that apply when a new
+ * topic is created or when a stage completes.
+ */
+export interface UserSettingsMap {
+  defaultPreset: PresetName;
+  defaultProfile: ProfileName;
+  defaultPromptFile: string;
+  autoSaveAfterEachStage: boolean;
+  notifyOnCompletion: boolean;
+  theme: 'light' | 'dark';
+}
+
+/**
+ * Per-user settings document. `settings` is a nested object so a
+ * future addition (e.g. a new default) can be made without
+ * changing the outer schema or requiring a migration on the
+ * collection level — Mongoose's Mixed handling of the inner
+ * object absorbs additions transparently.
+ */
+export interface UserSetting {
+  _id: MongoId;
+  userId: MongoId;
+  settings: UserSettingsMap;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// ============================================================
+//  App version (for update checks)
+// ============================================================
+
+/**
+ * A published release. The most recent entry by `createdAt` is
+ * the "latest version" that the desktop update checker compares
+ * against its own build version.
+ */
+export interface AppVersion {
+  _id: MongoId;
+  version: string;
+  downloadUrl: string;
+  releaseNotes?: string;
+  mandatory?: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Input shape for publishing a new release version.
+ */
+export interface AppVersionCreatePayload {
+  version: string;
+  downloadUrl: string;
+  releaseNotes?: string;
+  mandatory?: boolean;
+}
+
+/**
+ * Input shape for editing an existing release version. Every
+ * field is optional; the service merges the patch.
+ */
+export interface AppVersionUpdatePayload {
+  version?: string;
+  downloadUrl?: string;
+  releaseNotes?: string;
+  mandatory?: boolean;
+}
+
+// ============================================================
+//  Environment
+// ============================================================
+
+/**
+ * The set of environment variables the server expects at startup.
+ * Consumed by `dotenv` loading in `src/index.ts` and by the
+ * `handler/index.ts` serverless entry. A missing required field
+ * is a fatal startup error and must be caught before the HTTP
+ * listener begins accepting connections.
+ */
+export interface Env {
+  NODE_ENV: 'development' | 'production' | 'test';
+  PORT: number;
+  MONGODB_URI: string;
+  JWT_SECRET: string;
+  ADMIN_EMAIL: string;
+  ADMIN_PASSWORD: string;
+}
+</file>
+
+<file path="apps/server/src/features/shared/utils/bcrypt.ts">
+
+</file>
+
+<file path="apps/server/src/features/shared/utils/seedAdmin.ts">
+
+</file>
+
+<file path="apps/server/src/features/topics/controllers/topicController.ts">
+
+</file>
+
+<file path="apps/server/src/features/topics/models/Topic.ts">
+
+</file>
+
+<file path="apps/server/src/features/topics/routes/topicRoutes.ts">
+
+</file>
+
+<file path="apps/server/src/features/topics/services/topicService.ts">
+
+</file>
+
+<file path="apps/server/src/features/topics/index.ts">
+
+</file>
+
+<file path="apps/server/src/features/users/controllers/userController.ts">
+
+</file>
+
+<file path="apps/server/src/features/users/routes/userRoutes.ts">
+
+</file>
+
+<file path="apps/server/src/features/users/services/userService.ts">
+
+</file>
+
+<file path="apps/server/src/features/users/index.ts">
+
+</file>
+
+<file path="apps/server/src/features/version/controllers/versionController.ts">
+
+</file>
+
+<file path="apps/server/src/features/version/models/AppVersion.ts">
+
+</file>
+
+<file path="apps/server/src/features/version/routes/versionRoutes.ts">
+
+</file>
+
+<file path="apps/server/src/features/version/index.ts">
+
+</file>
+
+<file path="apps/server/src/app.ts">
+
+</file>
+
+<file path="apps/server/src/index.ts">
+
+</file>
+
+<file path="apps/server/.env.example">
+
+</file>
+
+<file path="apps/server/.gitignore">
+# ============================================================
+#  Node.js / JavaScript
+# ============================================================
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+*.md
+# ============================================================
+#  Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pythonenv*
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+*.pyc
+
+# ============================================================
+#  Desktop App (Electron)
+# ============================================================
+
+# Build outputs
+dist/
+out/
+build/
+release/
+*.exe
+*.dmg
+*.AppImage
+*.snap
+*.deb
+*.rpm
+
+# Electron specific
+*.asar
+*.asar.unpacked
+
+# ============================================================
+#  Backend
+# ============================================================
+
+backend/dist/
+backend/node_modules/
+backend/.env
+backend/.env.local
+backend/.env.*.local
+
+# ============================================================
+#  Vercel
+# ============================================================
+
+
+# ============================================================
+#  IDE / Editor
+# ============================================================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vs/
+.wakatime-project
+
+# ============================================================
+#  Operating System
+# ============================================================
+
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.temp
+
+# ============================================================
+#  Application Specific
+# ============================================================
+
+# Campaign data (user generated)
+plan.xlsx
+results.csv
+*.log
+
+# Image library — TEMPORARILY IGNORED (see "RE-ENABLE TRACKING" below).
+#
+# The bundled image library (~1,000 images) is excluded from git for
+# now to keep pushes fast and the repo small. The images still live on
+# disk at apps/desktop/src/resources/images/ and are still bundled by
+# `npm run pack` via the extraResources entry in package.json — they
+# simply are not tracked by git.
+#
+# *.png is ignored globally (see the screenshot rules below). The
+# folder-level ignore below catches every format, not just PNG.
+*.png
+apps/desktop/src/resources/images/
+
+# RE-ENABLE TRACKING LATER:
+#   1. Delete the line above (`apps/desktop/src/resources/images/`).
+#   2. Append these four negations, in this order, at the end of
+#      this same section:
+#          !apps/desktop/src/resources/images/**/*.png
+#          !apps/desktop/src/resources/images/**/*.jpg
+#          !apps/desktop/src/resources/images/**/*.jpeg
+#          !apps/desktop/src/resources/images/**/*.webp
+#   3. Run: git add apps/desktop/src/resources/images/
+
+# Image optimization backups
+# Written by apps/desktop/scripts/optimize-images.mjs — pre-optimization
+# originals kept locally. Not tracked, not shipped in the .exe. Safe to
+# delete if you no longer need the originals.
+apps/desktop/.image-backups/
+
+# Screenshots
+results/*.png
+error_*.png
+
+# Temporary config
+resources/config/*.tmp
+resources/config/*.bak
+
+# Playwright browsers (large, can be re-downloaded)
+resources/python/lib/python*/site-packages/playwright/driver/
+resources/python/lib/python*/site-packages/playwright/.local-browsers/
+
+# Compiled Python (obfuscated)
+resources/scripts/**/*.pyc
+resources/scripts/**/__pycache__/
+
+# Local environment
+.env
+.env.local
+.env.*.local
+
+# ============================================================
+#  Secrets / Credentials
+# ============================================================
+
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.p8
+*.p7b
+
+# ============================================================
+#  Test / Coverage
+# ============================================================
+
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# ============================================================
+#  Archive / Backup
+# ============================================================
+
+*.zip
+*.tar.gz
+*.7z
+*.rar
+*.bak
+*.backup
+
+# ============================================================
+#  User-specific files
+# ============================================================
+
+# Excel temporary files
+~$*.xlsx
+~$*.xls
+*.xlk
+
+# ============================================================
+#  Logs
+# ============================================================
+
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# ============================================================
+#  TypeScript (compiled outputs)
+# ============================================================
+
+*.tsbuildinfo
+*.js.map
+*.d.ts.map
+
+# ============================================================
+#  Python virtual environment (global)
+# ============================================================
+
+# Ignore any virtual environment folders in the project root
+.venv/
+venv/
+env/
+myenv/
+
+# ============================================================
+#  MongoDB / Database
+# ============================================================
+
+*.db
+*.sqlite
+*.sqlite3
+mongodb-data/
+
+# ============================================================
+#  Distribution / Packaging
+# ============================================================
+
+*.exe
+*.msi
+*.dmg
+*.pkg
+*.deb
+*.rpm
+*.AppImage
+*.snap
+*.flatpak
+*.portable
+*.nupkg
+*.nuget
+
+vite.config.js
+vite.config.js.map
+vite.config.d.ts
+*.d.ts
+
+*.md
+</file>
+
+<file path="apps/server/package.json">
+{
+  "name": "writespeare-server",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon --watch src --ext ts --exec tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "seed": "tsx src/features/shared/utils/seedAdmin.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
+    "express-validator": "^7.2.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.10.0",
+    "morgan": "^1.10.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/morgan": "^1.9.9",
+    "@types/node": "^22.20.2",
+    "@vercel/node": "^13.0.1",
+    "nodemon": "^3.1.14",
+    "tsx": "^4.23.13",
+    "typescript": "~5.8.3"
+  }
+}
+</file>
+
+<file path="apps/server/tsconfig.json">
+{
+  // ============================================================
+  //  WriteSpeare — Backend TypeScript Configuration
+  // ============================================================
+  //  Mirrors the ROOKIE server tsconfig. Kept in lockstep with
+  //  ROOKIE so that tooling, editor behaviour, and strictness
+  //  rules are identical across both projects. Any change here
+  //  should be deliberately weighed against the same change in
+  //  ROOKIE's server config.
+  // ============================================================
+
+  "compilerOptions": {
+    // ----------------------------------------------------------
+    //  File Layout
+    // ----------------------------------------------------------
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    // ----------------------------------------------------------
+    //  Environment Settings
+    // ----------------------------------------------------------
+    //  NodeNext resolves imports exactly as Node.js would at
+    //  runtime — this is required because the backend runs as an
+    //  ES module ("type": "module" in package.json) and uses
+    //  explicit ".js" suffixes in import specifiers.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2020",
+    "lib": ["ES2020"],
+    "types": ["node"],
+
+    // ----------------------------------------------------------
+    //  Outputs
+    // ----------------------------------------------------------
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+
+    // ----------------------------------------------------------
+    //  Strict Typechecking
+    // ----------------------------------------------------------
+    //  noUncheckedIndexedAccess: array[0] is T | undefined.
+    //  exactOptionalPropertyTypes: { a?: T } cannot receive
+    //    an explicit undefined — must use a conditional spread.
+    //  These two are the most opinionated flags in the set;
+    //  they catch real bugs but require disciplined call sites.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+
+    // ----------------------------------------------------------
+    //  Style / Hygiene
+    // ----------------------------------------------------------
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+
+    // ----------------------------------------------------------
+    //  Recommended / Module Hygiene
+    // ----------------------------------------------------------
+    "jsx": "react-jsx",
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
+  },
+
+  // ----------------------------------------------------------
+  //  Scope
+  // ----------------------------------------------------------
+  //  Only compile files under src/. Everything else (dist,
+  //  node_modules, configs at the root) is excluded — configs
+  //  like vercel.json and package.json are not TypeScript.
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+</file>
+
+<file path="apps/server/vercel.json">
+
+</file>
+
+<file path=".env.example">
+
+</file>
+
+<file path=".gitattributes">
+
+</file>
+
+<file path=".gitignore">
+# ============================================================
+#  Node.js / JavaScript
+# ============================================================
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+*.md
+# ============================================================
+#  Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pythonenv*
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+*.pyc
+
+# ============================================================
+#  Desktop App (Electron)
+# ============================================================
+
+# Build outputs
+dist/
+out/
+build/
+release/
+*.exe
+*.dmg
+*.AppImage
+*.snap
+*.deb
+*.rpm
+
+# Electron specific
+*.asar
+*.asar.unpacked
+
+# ============================================================
+#  Backend
+# ============================================================
+
+backend/dist/
+backend/node_modules/
+backend/.env
+backend/.env.local
+backend/.env.*.local
+
+# ============================================================
+#  Vercel
+# ============================================================
+
+
+# ============================================================
+#  IDE / Editor
+# ============================================================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vs/
+.wakatime-project
+
+# ============================================================
+#  Operating System
+# ============================================================
+
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.temp
+
+# ============================================================
+#  Application Specific
+# ============================================================
+
+# Campaign data (user generated)
+plan.xlsx
+results.csv
+*.log
+
+# Image library — TEMPORARILY IGNORED (see "RE-ENABLE TRACKING" below).
+#
+# The bundled image library (~1,000 images) is excluded from git for
+# now to keep pushes fast and the repo small. The images still live on
+# disk at apps/desktop/src/resources/images/ and are still bundled by
+# `npm run pack` via the extraResources entry in package.json — they
+# simply are not tracked by git.
+#
+# *.png is ignored globally (see the screenshot rules below). The
+# folder-level ignore below catches every format, not just PNG.
+*.png
+apps/desktop/src/resources/images/
+
+# RE-ENABLE TRACKING LATER:
+#   1. Delete the line above (`apps/desktop/src/resources/images/`).
+#   2. Append these four negations, in this order, at the end of
+#      this same section:
+#          !apps/desktop/src/resources/images/**/*.png
+#          !apps/desktop/src/resources/images/**/*.jpg
+#          !apps/desktop/src/resources/images/**/*.jpeg
+#          !apps/desktop/src/resources/images/**/*.webp
+#   3. Run: git add apps/desktop/src/resources/images/
+
+# Image optimization backups
+# Written by apps/desktop/scripts/optimize-images.mjs — pre-optimization
+# originals kept locally. Not tracked, not shipped in the .exe. Safe to
+# delete if you no longer need the originals.
+apps/desktop/.image-backups/
+
+# Screenshots
+results/*.png
+error_*.png
+
+# Temporary config
+resources/config/*.tmp
+resources/config/*.bak
+
+# Playwright browsers (large, can be re-downloaded)
+resources/python/lib/python*/site-packages/playwright/driver/
+resources/python/lib/python*/site-packages/playwright/.local-browsers/
+
+# Compiled Python (obfuscated)
+resources/scripts/**/*.pyc
+resources/scripts/**/__pycache__/
+
+# Local environment
+.env
+.env.local
+.env.*.local
+
+# ============================================================
+#  Secrets / Credentials
+# ============================================================
+
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.p8
+*.p7b
+
+# ============================================================
+#  Test / Coverage
+# ============================================================
+
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# ============================================================
+#  Archive / Backup
+# ============================================================
+
+*.zip
+*.tar.gz
+*.7z
+*.rar
+*.bak
+*.backup
+
+# ============================================================
+#  User-specific files
+# ============================================================
+
+# Excel temporary files
+~$*.xlsx
+~$*.xls
+*.xlk
+
+# ============================================================
+#  Logs
+# ============================================================
+
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# ============================================================
+#  TypeScript (compiled outputs)
+# ============================================================
+
+*.tsbuildinfo
+*.js.map
+*.d.ts.map
+
+# ============================================================
+#  Python virtual environment (global)
+# ============================================================
+
+# Ignore any virtual environment folders in the project root
+.venv/
+venv/
+env/
+myenv/
+
+# ============================================================
+#  MongoDB / Database
+# ============================================================
+
+*.db
+*.sqlite
+*.sqlite3
+mongodb-data/
+
+# ============================================================
+#  Distribution / Packaging
+# ============================================================
+
+*.exe
+*.msi
+*.dmg
+*.pkg
+*.deb
+*.rpm
+*.AppImage
+*.snap
+*.flatpak
+*.portable
+*.nupkg
+*.nuget
+
+vite.config.js
+vite.config.js.map
+vite.config.d.ts
+*.d.ts
+
+*.md
+</file>
+
+<file path="create-structure.bat">
+@echo off
+setlocal EnableDelayedExpansion
+cd /d "%~dp0"
+
+echo ============================================================
+echo  WriteSpeare - Project Structure Creator
+echo  Working directory: %CD%
+echo ============================================================
+echo.
+
+REM ============================================================
+REM  ROOT
+REM ============================================================
+echo [ROOT] Creating workspace files...
+type nul > "package.json"
+type nul > ".gitignore"
+type nul > ".gitattributes"
+type nul > "repomix.config.json"
+type nul > "README.md"
+type nul > ".env.example"
+
+REM ============================================================
+REM  BACKEND - apps/server - FOLDERS
+REM ============================================================
+echo [SERVER] Creating folders...
+
+mkdir "apps\server\handler" 2>nul
+mkdir "apps\server\src\features\shared\config" 2>nul
+mkdir "apps\server\src\features\shared\middleware" 2>nul
+mkdir "apps\server\src\features\shared\types" 2>nul
+mkdir "apps\server\src\features\shared\utils" 2>nul
+mkdir "apps\server\src\features\auth\controllers" 2>nul
+mkdir "apps\server\src\features\auth\middleware" 2>nul
+mkdir "apps\server\src\features\auth\models" 2>nul
+mkdir "apps\server\src\features\auth\routes" 2>nul
+mkdir "apps\server\src\features\auth\services" 2>nul
+mkdir "apps\server\src\features\auth\utils" 2>nul
+mkdir "apps\server\src\features\admin\controllers" 2>nul
+mkdir "apps\server\src\features\admin\middleware" 2>nul
+mkdir "apps\server\src\features\admin\routes" 2>nul
+mkdir "apps\server\src\features\admin\services" 2>nul
+mkdir "apps\server\src\features\users\controllers" 2>nul
+mkdir "apps\server\src\features\users\routes" 2>nul
+mkdir "apps\server\src\features\users\services" 2>nul
+mkdir "apps\server\src\features\topics\controllers" 2>nul
+mkdir "apps\server\src\features\topics\models" 2>nul
+mkdir "apps\server\src\features\topics\routes" 2>nul
+mkdir "apps\server\src\features\topics\services" 2>nul
+mkdir "apps\server\src\features\documents\controllers" 2>nul
+mkdir "apps\server\src\features\documents\models" 2>nul
+mkdir "apps\server\src\features\documents\routes" 2>nul
+mkdir "apps\server\src\features\documents\services" 2>nul
+mkdir "apps\server\src\features\articles\controllers" 2>nul
+mkdir "apps\server\src\features\articles\models" 2>nul
+mkdir "apps\server\src\features\articles\routes" 2>nul
+mkdir "apps\server\src\features\articles\services" 2>nul
+mkdir "apps\server\src\features\reports\controllers" 2>nul
+mkdir "apps\server\src\features\reports\models" 2>nul
+mkdir "apps\server\src\features\reports\routes" 2>nul
+mkdir "apps\server\src\features\reports\services" 2>nul
+mkdir "apps\server\src\features\settings\controllers" 2>nul
+mkdir "apps\server\src\features\settings\models" 2>nul
+mkdir "apps\server\src\features\settings\routes" 2>nul
+mkdir "apps\server\src\features\settings\services" 2>nul
+mkdir "apps\server\src\features\version\controllers" 2>nul
+mkdir "apps\server\src\features\version\models" 2>nul
+mkdir "apps\server\src\features\version\routes" 2>nul
+
+REM ============================================================
+REM  BACKEND - apps/server - FILES
+REM ============================================================
+echo [SERVER] Creating files...
+
+type nul > "apps\server\package.json"
+type nul > "apps\server\tsconfig.json"
+type nul > "apps\server\vercel.json"
+type nul > "apps\server\.gitignore"
+type nul > "apps\server\.env"
+type nul > "apps\server\.env.example"
+type nul > "apps\server\handler\index.ts"
+type nul > "apps\server\src\app.ts"
+type nul > "apps\server\src\index.ts"
+type nul > "apps\server\src\features\shared\config\db.ts"
+type nul > "apps\server\src\features\shared\middleware\errorHandler.ts"
+type nul > "apps\server\src\features\shared\middleware\validate.ts"
+type nul > "apps\server\src\features\shared\middleware\rateLimit.ts"
+type nul > "apps\server\src\features\shared\types\index.ts"
+type nul > "apps\server\src\features\shared\utils\bcrypt.ts"
+type nul > "apps\server\src\features\shared\utils\seedAdmin.ts"
+type nul > "apps\server\src\features\auth\controllers\authController.ts"
+type nul > "apps\server\src\features\auth\middleware\authGuard.ts"
+type nul > "apps\server\src\features\auth\models\User.ts"
+type nul > "apps\server\src\features\auth\routes\authRoutes.ts"
+type nul > "apps\server\src\features\auth\services\authService.ts"
+type nul > "apps\server\src\features\auth\utils\bcrypt.ts"
+type nul > "apps\server\src\features\auth\utils\jwt.ts"
+type nul > "apps\server\src\features\auth\index.ts"
+type nul > "apps\server\src\features\admin\controllers\adminController.ts"
+type nul > "apps\server\src\features\admin\middleware\adminGuard.ts"
+type nul > "apps\server\src\features\admin\routes\adminRoutes.ts"
+type nul > "apps\server\src\features\admin\services\adminService.ts"
+type nul > "apps\server\src\features\admin\index.ts"
+type nul > "apps\server\src\features\users\controllers\userController.ts"
+type nul > "apps\server\src\features\users\routes\userRoutes.ts"
+type nul > "apps\server\src\features\users\services\userService.ts"
+type nul > "apps\server\src\features\users\index.ts"
+type nul > "apps\server\src\features\topics\controllers\topicController.ts"
+type nul > "apps\server\src\features\topics\models\Topic.ts"
+type nul > "apps\server\src\features\topics\routes\topicRoutes.ts"
+type nul > "apps\server\src\features\topics\services\topicService.ts"
+type nul > "apps\server\src\features\topics\index.ts"
+type nul > "apps\server\src\features\documents\controllers\documentController.ts"
+type nul > "apps\server\src\features\documents\models\Document.ts"
+type nul > "apps\server\src\features\documents\routes\documentRoutes.ts"
+type nul > "apps\server\src\features\documents\services\documentService.ts"
+type nul > "apps\server\src\features\documents\index.ts"
+type nul > "apps\server\src\features\articles\controllers\articleController.ts"
+type nul > "apps\server\src\features\articles\models\Article.ts"
+type nul > "apps\server\src\features\articles\routes\articleRoutes.ts"
+type nul > "apps\server\src\features\articles\services\articleService.ts"
+type nul > "apps\server\src\features\articles\index.ts"
+type nul > "apps\server\src\features\reports\controllers\reportController.ts"
+type nul > "apps\server\src\features\reports\models\Report.ts"
+type nul > "apps\server\src\features\reports\routes\reportRoutes.ts"
+type nul > "apps\server\src\features\reports\services\reportService.ts"
+type nul > "apps\server\src\features\reports\index.ts"
+type nul > "apps\server\src\features\settings\controllers\settingsController.ts"
+type nul > "apps\server\src\features\settings\models\UserSetting.ts"
+type nul > "apps\server\src\features\settings\models\Preset.ts"
+type nul > "apps\server\src\features\settings\routes\settingsRoutes.ts"
+type nul > "apps\server\src\features\settings\services\settingsService.ts"
+type nul > "apps\server\src\features\settings\index.ts"
+type nul > "apps\server\src\features\version\controllers\versionController.ts"
+type nul > "apps\server\src\features\version\models\AppVersion.ts"
+type nul > "apps\server\src\features\version\routes\versionRoutes.ts"
+type nul > "apps\server\src\features\version\index.ts"
+
+REM ============================================================
+REM  DESKTOP - apps/desktop - FOLDERS
+REM ============================================================
+echo [DESKTOP] Creating folders...
+
+mkdir "apps\desktop\scripts" 2>nul
+mkdir "apps\desktop\src\main" 2>nul
+mkdir "apps\desktop\src\renderer" 2>nul
+mkdir "apps\desktop\src\renderer\styles" 2>nul
+
+mkdir "apps\desktop\src\features\shared\api" 2>nul
+mkdir "apps\desktop\src\features\shared\components" 2>nul
+mkdir "apps\desktop\src\features\shared\constants" 2>nul
+mkdir "apps\desktop\src\features\shared\hooks" 2>nul
+mkdir "apps\desktop\src\features\shared\store" 2>nul
+mkdir "apps\desktop\src\features\shared\types" 2>nul
+mkdir "apps\desktop\src\features\shared\utils" 2>nul
+
+mkdir "apps\desktop\src\features\auth\api" 2>nul
+mkdir "apps\desktop\src\features\auth\hooks" 2>nul
+mkdir "apps\desktop\src\features\auth\ipc" 2>nul
+mkdir "apps\desktop\src\features\auth\pages" 2>nul
+mkdir "apps\desktop\src\features\auth\store" 2>nul
+mkdir "apps\desktop\src\features\auth\types" 2>nul
+
+mkdir "apps\desktop\src\features\topics\components" 2>nul
+mkdir "apps\desktop\src\features\topics\hooks" 2>nul
+mkdir "apps\desktop\src\features\topics\ipc" 2>nul
+mkdir "apps\desktop\src\features\topics\pages" 2>nul
+mkdir "apps\desktop\src\features\topics\services" 2>nul
+mkdir "apps\desktop\src\features\topics\store" 2>nul
+
+mkdir "apps\desktop\src\features\research\components" 2>nul
+mkdir "apps\desktop\src\features\research\hooks" 2>nul
+mkdir "apps\desktop\src\features\research\ipc" 2>nul
+mkdir "apps\desktop\src\features\research\services" 2>nul
+mkdir "apps\desktop\src\features\research\store" 2>nul
+
+mkdir "apps\desktop\src\features\documents\components" 2>nul
+mkdir "apps\desktop\src\features\documents\hooks" 2>nul
+mkdir "apps\desktop\src\features\documents\ipc" 2>nul
+mkdir "apps\desktop\src\features\documents\services" 2>nul
+mkdir "apps\desktop\src\features\documents\store" 2>nul
+
+mkdir "apps\desktop\src\features\writer\components" 2>nul
+mkdir "apps\desktop\src\features\writer\hooks" 2>nul
+mkdir "apps\desktop\src\features\writer\ipc" 2>nul
+mkdir "apps\desktop\src\features\writer\services" 2>nul
+mkdir "apps\desktop\src\features\writer\store" 2>nul
+
+mkdir "apps\desktop\src\features\validation\components" 2>nul
+mkdir "apps\desktop\src\features\validation\hooks" 2>nul
+mkdir "apps\desktop\src\features\validation\ipc" 2>nul
+mkdir "apps\desktop\src\features\validation\services" 2>nul
+mkdir "apps\desktop\src\features\validation\store" 2>nul
+
+mkdir "apps\desktop\src\features\export\components" 2>nul
+mkdir "apps\desktop\src\features\export\hooks" 2>nul
+mkdir "apps\desktop\src\features\export\ipc" 2>nul
+mkdir "apps\desktop\src\features\export\services" 2>nul
+
+mkdir "apps\desktop\src\features\settings\hooks" 2>nul
+mkdir "apps\desktop\src\features\settings\ipc" 2>nul
+mkdir "apps\desktop\src\features\settings\pages" 2>nul
+mkdir "apps\desktop\src\features\settings\services" 2>nul
+mkdir "apps\desktop\src\features\settings\store" 2>nul
+
+mkdir "apps\desktop\src\features\admin\components" 2>nul
+mkdir "apps\desktop\src\features\admin\hooks" 2>nul
+mkdir "apps\desktop\src\features\admin\ipc" 2>nul
+mkdir "apps\desktop\src\features\admin\pages" 2>nul
+mkdir "apps\desktop\src\features\admin\store" 2>nul
+
+mkdir "apps\desktop\src\features\automation\components" 2>nul
+mkdir "apps\desktop\src\features\automation\hooks" 2>nul
+mkdir "apps\desktop\src\features\automation\ipc" 2>nul
+mkdir "apps\desktop\src\features\automation\store" 2>nul
+
+mkdir "apps\desktop\src\resources\config" 2>nul
+mkdir "apps\desktop\src\resources\images" 2>nul
+mkdir "apps\desktop\src\resources\python" 2>nul
+mkdir "apps\desktop\src\resources\scripts\core" 2>nul
+mkdir "apps\desktop\src\resources\scripts\research" 2>nul
+mkdir "apps\desktop\src\resources\scripts\writer" 2>nul
+mkdir "apps\desktop\src\resources\scripts\validation" 2>nul
+mkdir "apps\desktop\src\resources\scripts\export" 2>nul
+mkdir "apps\desktop\src\resources\scripts\prompts" 2>nul
+mkdir "apps\desktop\src\resources\scripts\migrations" 2>nul
+
+REM ============================================================
+REM  DESKTOP - apps/desktop - ROOT FILES
+REM ============================================================
+echo [DESKTOP] Creating root files...
+
+type nul > "apps\desktop\package.json"
+type nul > "apps\desktop\tsconfig.json"
+type nul > "apps\desktop\vite.config.ts"
+type nul > "apps\desktop\tailwind.config.js"
+type nul > "apps\desktop\postcss.config.js"
+type nul > "apps\desktop\index.html"
+type nul > "apps\desktop\.gitattributes"
+type nul > "apps\desktop\.gitignore"
+type nul > "apps\desktop\scripts\optimize-images.mjs"
+
+REM ============================================================
+REM  DESKTOP - src/main
+REM ============================================================
+type nul > "apps\desktop\src\main\index.ts"
+type nul > "apps\desktop\src\main\preload.ts"
+type nul > "apps\desktop\src\main\protocols.ts"
+type nul > "apps\desktop\src\main\store.ts"
+
+REM ============================================================
+REM  DESKTOP - src/renderer
+REM ============================================================
+type nul > "apps\desktop\src\renderer\index.tsx"
+type nul > "apps\desktop\src\renderer\App.tsx"
+type nul > "apps\desktop\src\renderer\styles\tailwind.css"
+
+REM ============================================================
+REM  DESKTOP - shared feature
+REM ============================================================
+type nul > "apps\desktop\src\features\shared\api\client.ts"
+type nul > "apps\desktop\src\features\shared\components\Layout.tsx"
+type nul > "apps\desktop\src\features\shared\components\Modal.tsx"
+type nul > "apps\desktop\src\features\shared\components\Sidebar.tsx"
+type nul > "apps\desktop\src\features\shared\components\Toast.tsx"
+type nul > "apps\desktop\src\features\shared\constants\index.ts"
+type nul > "apps\desktop\src\features\shared\hooks\useToast.ts"
+type nul > "apps\desktop\src\features\shared\store\rootStore.ts"
+type nul > "apps\desktop\src\features\shared\types\index.ts"
+type nul > "apps\desktop\src\features\shared\utils\encryption.ts"
+type nul > "apps\desktop\src\features\shared\utils\logger.ts"
+
+REM ============================================================
+REM  DESKTOP - auth feature
+REM ============================================================
+type nul > "apps\desktop\src\features\auth\api\authApi.ts"
+type nul > "apps\desktop\src\features\auth\hooks\useAuth.ts"
+type nul > "apps\desktop\src\features\auth\ipc\authIPC.ts"
+type nul > "apps\desktop\src\features\auth\pages\Login.tsx"
+type nul > "apps\desktop\src\features\auth\store\userStore.ts"
+type nul > "apps\desktop\src\features\auth\types\authTypes.ts"
+
+REM ============================================================
+REM  DESKTOP - topics feature
+REM ============================================================
+type nul > "apps\desktop\src\features\topics\components\TopicCard.tsx"
+type nul > "apps\desktop\src\features\topics\components\NewTopicModal.tsx"
+type nul > "apps\desktop\src\features\topics\components\AdvancedSettings.tsx"
+type nul > "apps\desktop\src\features\topics\components\PresetSelector.tsx"
+type nul > "apps\desktop\src\features\topics\hooks\useTopics.ts"
+type nul > "apps\desktop\src\features\topics\ipc\topicsIPC.ts"
+type nul > "apps\desktop\src\features\topics\pages\Topics.tsx"
+type nul > "apps\desktop\src\features\topics\pages\TopicDetail.tsx"
+type nul > "apps\desktop\src\features\topics\services\topicsApi.ts"
+type nul > "apps\desktop\src\features\topics\store\topicStore.ts"
+
+REM ============================================================
+REM  DESKTOP - research feature
+REM ============================================================
+type nul > "apps\desktop\src\features\research\components\SearchProgress.tsx"
+type nul > "apps\desktop\src\features\research\components\SourceList.tsx"
+type nul > "apps\desktop\src\features\research\components\SourceCandidate.tsx"
+type nul > "apps\desktop\src\features\research\hooks\useResearch.ts"
+type nul > "apps\desktop\src\features\research\ipc\researchIPC.ts"
+type nul > "apps\desktop\src\features\research\services\searchService.ts"
+type nul > "apps\desktop\src\features\research\services\extractionService.ts"
+type nul > "apps\desktop\src\features\research\services\childProcessManager.ts"
+type nul > "apps\desktop\src\features\research\services\chromeLauncher.ts"
+type nul > "apps\desktop\src\features\research\services\portAllocator.ts"
+type nul > "apps\desktop\src\features\research\services\listenerBridge.ts"
+type nul > "apps\desktop\src\features\research\store\researchStore.ts"
+
+REM ============================================================
+REM  DESKTOP - documents feature
+REM ============================================================
+type nul > "apps\desktop\src\features\documents\components\DocumentList.tsx"
+type nul > "apps\desktop\src\features\documents\components\DocumentPreview.tsx"
+type nul > "apps\desktop\src\features\documents\hooks\useDocuments.ts"
+type nul > "apps\desktop\src\features\documents\ipc\documentsIPC.ts"
+type nul > "apps\desktop\src\features\documents\services\documentService.ts"
+type nul > "apps\desktop\src\features\documents\store\documentStore.ts"
+
+REM ============================================================
+REM  DESKTOP - writer feature
+REM ============================================================
+type nul > "apps\desktop\src\features\writer\components\WriterProgress.tsx"
+type nul > "apps\desktop\src\features\writer\components\PromptSelector.tsx"
+type nul > "apps\desktop\src\features\writer\components\ArticlePreview.tsx"
+type nul > "apps\desktop\src\features\writer\hooks\useWriter.ts"
+type nul > "apps\desktop\src\features\writer\ipc\writerIPC.ts"
+type nul > "apps\desktop\src\features\writer\services\writerService.ts"
+type nul > "apps\desktop\src\features\writer\store\writerStore.ts"
+
+REM ============================================================
+REM  DESKTOP - validation feature
+REM ============================================================
+type nul > "apps\desktop\src\features\validation\components\ValidationReport.tsx"
+type nul > "apps\desktop\src\features\validation\components\ReadabilityPanel.tsx"
+type nul > "apps\desktop\src\features\validation\components\SeoPanel.tsx"
+type nul > "apps\desktop\src\features\validation\components\OriginalityPanel.tsx"
+type nul > "apps\desktop\src\features\validation\components\AiMarkersPanel.tsx"
+type nul > "apps\desktop\src\features\validation\components\GrammarPanel.tsx"
+type nul > "apps\desktop\src\features\validation\components\KeywordPanel.tsx"
+type nul > "apps\desktop\src\features\validation\hooks\useValidation.ts"
+type nul > "apps\desktop\src\features\validation\ipc\validationIPC.ts"
+type nul > "apps\desktop\src\features\validation\services\validationService.ts"
+type nul > "apps\desktop\src\features\validation\store\validationStore.ts"
+
+REM ============================================================
+REM  DESKTOP - export feature
+REM ============================================================
+type nul > "apps\desktop\src\features\export\components\ExportMenu.tsx"
+type nul > "apps\desktop\src\features\export\hooks\useExport.ts"
+type nul > "apps\desktop\src\features\export\ipc\exportIPC.ts"
+type nul > "apps\desktop\src\features\export\services\exportService.ts"
+
+REM ============================================================
+REM  DESKTOP - settings feature
+REM ============================================================
+type nul > "apps\desktop\src\features\settings\hooks\useSettings.ts"
+type nul > "apps\desktop\src\features\settings\ipc\settingsIPC.ts"
+type nul > "apps\desktop\src\features\settings\pages\Settings.tsx"
+type nul > "apps\desktop\src\features\settings\services\updateService.ts"
+type nul > "apps\desktop\src\features\settings\store\settingsStore.ts"
+
+REM ============================================================
+REM  DESKTOP - admin feature
+REM ============================================================
+type nul > "apps\desktop\src\features\admin\components\UserForm.tsx"
+type nul > "apps\desktop\src\features\admin\components\UserList.tsx"
+type nul > "apps\desktop\src\features\admin\hooks\useAdmin.ts"
+type nul > "apps\desktop\src\features\admin\ipc\adminIPC.ts"
+type nul > "apps\desktop\src\features\admin\pages\Admin.tsx"
+type nul > "apps\desktop\src\features\admin\store\adminStore.ts"
+
+REM ============================================================
+REM  DESKTOP - automation feature
+REM ============================================================
+type nul > "apps\desktop\src\features\automation\components\CaptchaModal.tsx"
+type nul > "apps\desktop\src\features\automation\components\RunningTaskIndicator.tsx"
+type nul > "apps\desktop\src\features\automation\hooks\useAutomation.ts"
+type nul > "apps\desktop\src\features\automation\ipc\automationIPC.ts"
+type nul > "apps\desktop\src\features\automation\store\automationStore.ts"
+
+REM ============================================================
+REM  DESKTOP - resources
+REM ============================================================
+type nul > "apps\desktop\src\resources\config\exclude_sites.csv"
+type nul > "apps\desktop\src\resources\config\paywall_domains.txt"
+type nul > "apps\desktop\src\resources\config\default_presets.json"
+type nul > "apps\desktop\src\resources\images\logo.svg"
+
+REM ============================================================
+REM  PYTHON SCRIPTS
+REM ============================================================
+echo [PYTHON] Creating Python script files...
+
+type nul > "apps\desktop\src\resources\scripts\core\__init__.py"
+type nul > "apps\desktop\src\resources\scripts\core\control_mode.py"
+type nul > "apps\desktop\src\resources\scripts\core\output.py"
+type nul > "apps\desktop\src\resources\scripts\core\browser.py"
+type nul > "apps\desktop\src\resources\scripts\core\extractor.py"
+type nul > "apps\desktop\src\resources\scripts\core\file_io.py"
+type nul > "apps\desktop\src\resources\scripts\core\utils.py"
+
+type nul > "apps\desktop\src\resources\scripts\research\__init__.py"
+type nul > "apps\desktop\src\resources\scripts\research\google_search.py"
+type nul > "apps\desktop\src\resources\scripts\research\duckduckgo_search.py"
+type nul > "apps\desktop\src\resources\scripts\research\extract_dispatch.py"
+type nul > "apps\desktop\src\resources\scripts\research\extract_generic.py"
+type nul > "apps\desktop\src\resources\scripts\research\extract_reddit.py"
+type nul > "apps\desktop\src\resources\scripts\research\extract_quora.py"
+type nul > "apps\desktop\src\resources\scripts\research\extract_medium.py"
+type nul > "apps\desktop\src\resources\scripts\research\extract_twitter.py"
+
+type nul > "apps\desktop\src\resources\scripts\writer\__init__.py"
+type nul > "apps\desktop\src\resources\scripts\writer\deepseek_writer.py"
+
+type nul > "apps\desktop\src\resources\scripts\validation\__init__.py"
+type nul > "apps\desktop\src\resources\scripts\validation\readability.py"
+type nul > "apps\desktop\src\resources\scripts\validation\seo_check.py"
+type nul > "apps\desktop\src\resources\scripts\validation\keyword_check.py"
+type nul > "apps\desktop\src\resources\scripts\validation\originality.py"
+type nul > "apps\desktop\src\resources\scripts\validation\ai_markers.py"
+type nul > "apps\desktop\src\resources\scripts\validation\grammar.py"
+type nul > "apps\desktop\src\resources\scripts\validation\validate_all.py"
+
+type nul > "apps\desktop\src\resources\scripts\export\__init__.py"
+type nul > "apps\desktop\src\resources\scripts\export\export_docx.py"
+type nul > "apps\desktop\src\resources\scripts\export\export_md.py"
+
+type nul > "apps\desktop\src\resources\scripts\prompts\default.md"
+type nul > "apps\desktop\src\resources\scripts\prompts\seo-focused.md"
+type nul > "apps\desktop\src\resources\scripts\prompts\conversational.md"
+
+type nul > "apps\desktop\src\resources\scripts\migrations\.gitkeep"
+type nul > "apps\desktop\src\resources\scripts\main.py"
+type nul > "apps\desktop\src\resources\scripts\requirements.txt"
+type nul > "apps\desktop\src\resources\scripts\README.md"
+
+echo.
+echo ============================================================
+echo  WriteSpeare structure created successfully!
+echo ============================================================
+echo.
+echo Next steps:
+echo   1. Fill in package.json files (root, server, desktop).
+echo   2. Run npm install commands.
+echo   3. Set up embedded Python runtime.
+echo   4. Begin coding (Session 1 = backend foundation).
+echo.
+pause
+</file>
+
+<file path="package.json">
+{
+  "name": "writespeare",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/server",
+    "apps/desktop"
+  ]
+}
+</file>
+
+</files>

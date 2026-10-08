@@ -1,0 +1,266 @@
+# ============================================================
+#  Node.js / JavaScript
+# ============================================================
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+*.md
+# ============================================================
+#  Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pythonenv*
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+*.pyc
+
+# ============================================================
+#  Desktop App (Electron)
+# ============================================================
+
+# Build outputs
+dist/
+out/
+build/
+release/
+*.exe
+*.dmg
+*.AppImage
+*.snap
+*.deb
+*.rpm
+
+# Electron specific
+*.asar
+*.asar.unpacked
+
+# ============================================================
+#  Backend
+# ============================================================
+
+backend/dist/
+backend/node_modules/
+backend/.env
+backend/.env.local
+backend/.env.*.local
+
+# ============================================================
+#  Vercel
+# ============================================================
+
+
+# ============================================================
+#  IDE / Editor
+# ============================================================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vs/
+.wakatime-project
+
+# ============================================================
+#  Operating System
+# ============================================================
+
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.temp
+
+# ============================================================
+#  Application Specific
+# ============================================================
+
+# Campaign data (user generated)
+plan.xlsx
+results.csv
+*.log
+
+# Image library — TEMPORARILY IGNORED (see "RE-ENABLE TRACKING" below).
+#
+# The bundled image library (~1,000 images) is excluded from git for
+# now to keep pushes fast and the repo small. The images still live on
+# disk at apps/desktop/src/resources/images/ and are still bundled by
+# `npm run pack` via the extraResources entry in package.json — they
+# simply are not tracked by git.
+#
+# *.png is ignored globally (see the screenshot rules below). The
+# folder-level ignore below catches every format, not just PNG.
+*.png
+apps/desktop/src/resources/images/
+
+# RE-ENABLE TRACKING LATER:
+#   1. Delete the line above (`apps/desktop/src/resources/images/`).
+#   2. Append these four negations, in this order, at the end of
+#      this same section:
+#          !apps/desktop/src/resources/images/**/*.png
+#          !apps/desktop/src/resources/images/**/*.jpg
+#          !apps/desktop/src/resources/images/**/*.jpeg
+#          !apps/desktop/src/resources/images/**/*.webp
+#   3. Run: git add apps/desktop/src/resources/images/
+
+# Image optimization backups
+# Written by apps/desktop/scripts/optimize-images.mjs — pre-optimization
+# originals kept locally. Not tracked, not shipped in the .exe. Safe to
+# delete if you no longer need the originals.
+apps/desktop/.image-backups/
+
+# Screenshots
+results/*.png
+error_*.png
+
+# Temporary config
+resources/config/*.tmp
+resources/config/*.bak
+
+# Playwright browsers (large, can be re-downloaded)
+resources/python/lib/python*/site-packages/playwright/driver/
+resources/python/lib/python*/site-packages/playwright/.local-browsers/
+
+# Compiled Python (obfuscated)
+resources/scripts/**/*.pyc
+resources/scripts/**/__pycache__/
+
+# Local environment
+.env
+.env.local
+.env.*.local
+
+# ============================================================
+#  Secrets / Credentials
+# ============================================================
+
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.p8
+*.p7b
+
+# ============================================================
+#  Test / Coverage
+# ============================================================
+
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# ============================================================
+#  Archive / Backup
+# ============================================================
+
+*.zip
+*.tar.gz
+*.7z
+*.rar
+*.bak
+*.backup
+
+# ============================================================
+#  User-specific files
+# ============================================================
+
+# Excel temporary files
+~$*.xlsx
+~$*.xls
+*.xlk
+
+# ============================================================
+#  Logs
+# ============================================================
+
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# ============================================================
+#  TypeScript (compiled outputs)
+# ============================================================
+
+*.tsbuildinfo
+*.js.map
+*.d.ts.map
+
+# ============================================================
+#  Python virtual environment (global)
+# ============================================================
+
+# Ignore any virtual environment folders in the project root
+.venv/
+venv/
+env/
+myenv/
+
+# ============================================================
+#  MongoDB / Database
+# ============================================================
+
+*.db
+*.sqlite
+*.sqlite3
+mongodb-data/
+
+# ============================================================
+#  Distribution / Packaging
+# ============================================================
+
+*.exe
+*.msi
+*.dmg
+*.pkg
+*.deb
+*.rpm
+*.AppImage
+*.snap
+*.flatpak
+*.portable
+*.nupkg
+*.nuget
+
+vite.config.js
+vite.config.js.map
+vite.config.d.ts
+*.d.ts
+
+*.md

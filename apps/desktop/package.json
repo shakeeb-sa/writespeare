@@ -1,0 +1,114 @@
+{
+  "name": "writespeare-desktop",
+  "version": "1.0.0",
+  "description": "WriteSpeare - AI Content Writer",
+  "main": "dist/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron .",
+    "type-check": "tsc --noEmit",
+    "build:renderer": "vite build",
+    "build:main": "tsc",
+    "build": "npm run build:renderer && npm run build:main",
+    "pack": "npm run build && electron-builder",
+    "optimize:images": "node scripts/optimize-images.mjs"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "cheerio": "^1.0.0",
+    "electron-store": "^11.0.2",
+    "electron-updater": "^6.8.9",
+    "framer-motion": "^13.2.0",
+    "lucide-react": "^1.43.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^9.0.1",
+    "react-router-dom": "^7.18.3",
+    "remark-gfm": "^4.0.0",
+    "tree-kill": "^1.2.2",
+    "xlsx": "^0.18.5",
+    "zustand": "^5.0.15"
+  },
+  "build": {
+    "appId": "com.writespeare.writer",
+    "productName": "WriteSpeare",
+    "electronVersion": "44.3.0",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "!src/resources/python/**/*",
+      "!src/resources/scripts/**/*",
+      "!src/resources/config/**/*",
+      "!src/resources/images/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "src/resources/python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "src/resources/scripts",
+        "to": "scripts",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "src/resources/config",
+        "to": "config",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "src/resources/images",
+        "to": "images",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.70.0",
+    "@typescript-eslint/parser": "^8.70.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.5.5",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "eslint": "^10.10.0",
+    "javascript-obfuscator": "^5.7.0",
+    "postcss": "^8.5.28",
+    "sharp": "^0.33.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "~5.8.3",
+    "vite": "^8.2.2"
+  }
+}

@@ -1,0 +1,81 @@
+{
+  // ============================================================
+  //  WriteSpeare — Backend TypeScript Configuration
+  // ============================================================
+  //  Mirrors the ROOKIE server tsconfig. Kept in lockstep with
+  //  ROOKIE so that tooling, editor behaviour, and strictness
+  //  rules are identical across both projects. Any change here
+  //  should be deliberately weighed against the same change in
+  //  ROOKIE's server config.
+  // ============================================================
+
+  "compilerOptions": {
+    // ----------------------------------------------------------
+    //  File Layout
+    // ----------------------------------------------------------
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    // ----------------------------------------------------------
+    //  Environment Settings
+    // ----------------------------------------------------------
+    //  NodeNext resolves imports exactly as Node.js would at
+    //  runtime — this is required because the backend runs as an
+    //  ES module ("type": "module" in package.json) and uses
+    //  explicit ".js" suffixes in import specifiers.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2020",
+    "lib": ["ES2020"],
+    "types": ["node"],
+
+    // ----------------------------------------------------------
+    //  Outputs
+    // ----------------------------------------------------------
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+
+    // ----------------------------------------------------------
+    //  Strict Typechecking
+    // ----------------------------------------------------------
+    //  noUncheckedIndexedAccess: array[0] is T | undefined.
+    //  exactOptionalPropertyTypes: { a?: T } cannot receive
+    //    an explicit undefined — must use a conditional spread.
+    //  These two are the most opinionated flags in the set;
+    //  they catch real bugs but require disciplined call sites.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+
+    // ----------------------------------------------------------
+    //  Style / Hygiene
+    // ----------------------------------------------------------
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+
+    // ----------------------------------------------------------
+    //  Recommended / Module Hygiene
+    // ----------------------------------------------------------
+    "jsx": "react-jsx",
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
+  },
+
+  // ----------------------------------------------------------
+  //  Scope
+  // ----------------------------------------------------------
+  //  Only compile files under src/. Everything else (dist,
+  //  node_modules, configs at the root) is excluded — configs
+  //  like vercel.json and package.json are not TypeScript.
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
