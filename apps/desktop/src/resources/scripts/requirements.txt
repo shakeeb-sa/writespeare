@@ -1,0 +1,229 @@
+# =============================================================================
+#  WriteSpeare — Python dependencies
+# =============================================================================
+#
+#  Every package the automation pipeline imports is pinned here. This file
+#  is consumed by:
+#
+#      python.exe -m pip install -r requirements.txt
+#
+#  ...run against the embedded Python runtime that lives at
+#  apps/desktop/src/resources/python/. The runtime setup steps that
+#  invoke this file are in Part 4 of the master execution plan.
+#
+#  Version pinning policy:
+#      Every line uses `==` (exact pin), never `>=` or `~=`. The packaged
+#      app ships a frozen Python runtime; a transitive dependency that
+#      drifts between builds is a class of bug that only manifests on
+#      machines other than the developer's. An exact pin makes the
+#      pipeline reproducible: the same requirements.txt always produces
+#      the same installed environment, on every machine that installs it.
+#
+#  Which groups are "same as ROOKIE" and which are new:
+#      The comment block on each group names its provenance. The three
+#      "same as ROOKIE" groups are already battle-tested by the backlink
+#      bot and are carried over unchanged. The four "NEW" groups are the
+#      libraries that power WriteSpeare's article-quality features
+#      (content extraction, readability, keyword extraction, semantic
+#      similarity, grammar checking) — none of which existed in ROOKIE.
+#
+#  Not present, on purpose:
+#      - `keybert` — the plan marks it as optional and the app ships with
+#        `rake-nltk` as the default keyword extractor. The commented line
+#        near the bottom documents how to enable it for a power user who
+#        wants BERT-based keyword extraction.
+#      - `torch` — a transitive dependency of `sentence-transformers`.
+#        `pip` will pull it automatically when `sentence-transformers` is
+#        installed. Pinning it explicitly would force a specific CPU/GPU
+#        wheel and break the build on machines where the other variant is
+#        available. The transitive resolution is the correct behaviour.
+#      - Any linter, formatter, or test runner — this is the shipped
+#        runtime manifest, not a development manifest. Developer tooling
+#        is not installed in the packaged Python runtime.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+#  Browser automation
+# -----------------------------------------------------------------------------
+#  Same as ROOKIE. Playwright drives the Chromium instance that the
+#  research scripts (google_search.py, duckduckgo_search.py, every
+#  extract_*.py) and the writer script (deepseek_writer.py) connect to
+#  over CDP. The pinned version matches the Playwright browser build
+#  that the runtime setup installs via `python -m playwright install
+#  chromium`.
+# -----------------------------------------------------------------------------
+playwright==1.48.0
+
+
+# -----------------------------------------------------------------------------
+#  Data handling
+# -----------------------------------------------------------------------------
+#  Same as ROOKIE. pandas + openpyxl are the Excel I/O stack — WriteSpeare
+#  does not import Excel in its own pipeline, but the two libraries are
+#  retained because they are transitive requirements of several of the
+#  new libraries below (notably `trafilatura`'s benchmarks and
+#  `sentence-transformers`' dataset utilities), and because a future
+#  session may add a "export report to .xlsx" affordance that would need
+#  them without a requirements.txt change.
+# -----------------------------------------------------------------------------
+pandas==2.2.3
+openpyxl==3.1.5
+
+
+# -----------------------------------------------------------------------------
+#  Content extraction (NEW)
+# -----------------------------------------------------------------------------
+#  The stack that turns a raw HTML page into clean Markdown:
+#
+#    trafilatura    — the primary extractor. Called with
+#                     `output_format='markdown'` from
+#                     core/extractor.py. Boilerplate-strips the page
+#                     and preserves headings, links, and paragraph
+#                     structure.
+#
+#    beautifulsoup4 — the HTML parser used by the platform-specific
+#                     extractors (extract_reddit.py, extract_quora.py)
+#                     that need to walk the DOM in a targeted way rather
+#                     than rely on trafilatura's heuristic extraction.
+#
+#    lxml           — the fast HTML/XML parser backend that
+#                     beautifulsoup4 uses when available. Installing it
+#                     is what makes the DOM-walking extractors fast
+#                     enough to process dozens of pages per run.
+#
+#    requests       — the fallback HTTP client for pages that do not
+#                     need a full browser (static HTML, an already-
+#                     rendered JSON endpoint). Every page that DOES
+#                     need a browser goes through Playwright instead.
+#                     `requests` covers the minority of cases where a
+#                     lightweight fetch is enough.
+# -----------------------------------------------------------------------------
+trafilatura==1.12.0
+beautifulsoup4==4.12.3
+lxml==5.3.0
+requests==2.32.3
+
+
+# -----------------------------------------------------------------------------
+#  Text analysis (NEW)
+# -----------------------------------------------------------------------------
+#  The readability and keyword stack:
+#
+#    textstat       — the readability scorer. Called from
+#                     validation/readability.py to produce Flesch
+#                     Reading Ease, Flesch-Kincaid Grade, Gunning Fog,
+#                     SMOG, and the average sentence length.
+#
+#    nltk           — the tokenizer and POS tagger that several
+#                     validators depend on. seo_check.py uses it for
+#                     passive-voice detection; keyword_check.py uses
+#                     it for phrase-boundary detection. Requires the
+#                     `punkt`, `stopwords`, `wordnet`, and
+#                     `averaged_perceptron_tagger` corpora, which the
+#                     runtime setup downloads via
+#                     `nltk.download(...)`.
+#
+#    rake-nltk      — the RAKE keyword extractor. Called from
+#                     validation/keyword_check.py (and possibly from a
+#                     future "extract candidate keywords" step) to
+#                     surface keyword phrases that the sources use but
+#                     the user's original list did not name.
+# -----------------------------------------------------------------------------
+textstat==0.7.13
+nltk==3.9.1
+rake-nltk==1.0.6
+
+
+# -----------------------------------------------------------------------------
+#  Semantic similarity (NEW)
+# -----------------------------------------------------------------------------
+#  The originality stack. Two independent similarity signals are
+#  computed and reported side-by-side (see OriginalityReport in the
+#  shared types module):
+#
+#    scikit-learn          — the TF-IDF vectorizer and cosine-similarity
+#                            computation. The lexical-overlap half of
+#                            the originality check: catches sentences
+#                            that reuse the sources' exact wording.
+#
+#    sentence-transformers — the embedding model that produces the
+#                            semantic-similarity half. Catches
+#                            paraphrase — a sentence that rewords a
+#                            source without reusing its words. Loads
+#                            a pretrained model (~80 MB) on first use,
+#                            which is why the runtime's first
+#                            validation run is slower than subsequent
+#                            ones.
+# -----------------------------------------------------------------------------
+sentence-transformers==3.3.1
+scikit-learn==1.6.0
+
+
+# -----------------------------------------------------------------------------
+#  Grammar and style (NEW)
+# -----------------------------------------------------------------------------
+#  LanguageTool — the grammar/style/spelling checker. Called from
+#  validation/grammar.py. The `language-tool-python` wrapper starts a
+#  local LanguageTool server on first use (a Java subprocess), so the
+#  first validation run pays a startup cost. Every subsequent run
+#  reuses the running server.
+# -----------------------------------------------------------------------------
+language-tool-python==3.3.0
+
+
+# -----------------------------------------------------------------------------
+#  Optional — keyword extraction with BERT
+# -----------------------------------------------------------------------------
+#  keybert is an alternative keyword extractor that uses a BERT model
+#  instead of RAKE's co-occurrence statistics. It produces higher-
+#  quality keyword candidates at the cost of a ~400 MB model download
+#  and a slower first-run. The plan marks it as optional; the app ships
+#  with rake-nltk as the default and exposes a Settings toggle that
+#  switches to keybert when it is installed.
+#
+#  Uncomment the line below and re-run `pip install -r requirements.txt`
+#  to enable it.
+# -----------------------------------------------------------------------------
+# keybert==0.8.5
+
+
+# -----------------------------------------------------------------------------
+#  Logging
+# -----------------------------------------------------------------------------
+#  Same as ROOKIE. colorama provides ANSI color codes on Windows
+#  terminals. Used by core/utils.py for the colored log output that
+#  makes the automation log readable when a user inspects it from the
+#  LogViewer or from a terminal.
+# -----------------------------------------------------------------------------
+colorama==0.4.6
+
+
+# -----------------------------------------------------------------------------
+#  python-docx (export dependency)
+# -----------------------------------------------------------------------------
+#  The .docx writer for export/export_docx.py. Not mentioned in the
+#  library table in Part 5 of the tech stack document, but is named
+#  explicitly in the runtime setup step (`python.exe -m pip install
+#  ... python-docx==1.1.2 ...`) and in the plan's description of
+#  export_docx.py ("Markdown → .docx with python-docx"). Listed here so
+#  that a `pip install -r requirements.txt` reproduces the runtime's
+#  installed environment exactly, without requiring a second manual
+#  install step.
+# -----------------------------------------------------------------------------
+python-docx==1.1.2
+
+
+# -----------------------------------------------------------------------------
+#  jinja2 (prompt template dependency)
+# -----------------------------------------------------------------------------
+#  The template engine for the writer's prompt files
+#  (prompts/default.md, prompts/seo-focused.md,
+#  prompts/conversational.md). Rendered from
+#  core/file_io.py::render_prompt with the topic's variables
+#  (title, keywords, word_count, tone, sources). Named explicitly in
+#  the runtime setup step (`... jinja2==3.1.4 ...`) and in the plan's
+#  description of core/file_io.py ("render_prompt(template, vars)").
+#  Listed here for the same reason as python-docx above.
+# -----------------------------------------------------------------------------
+jinja2==3.1.4

@@ -264,3 +264,6 @@ vite.config.d.ts
 *.d.ts
 
 *.md
+
+python/
+lib/
