@@ -38,12 +38,16 @@
  *                        registered last or it never fires.
  *
  * Route mounting is deliberately incremental. The plan builds the
- * backend in numbered sessions — Session 1 is auth only; Session 2
- * adds topics, documents, articles, reports, settings, and version;
- * Session 3 adds users and admin. Mounting a router whose module
- * has no default export yet would throw at startup, so this file
- * mounts exactly the routers that exist and grows by one
- * `app.use(...)` line per session.
+ * backend in numbered sessions, and this file grows by one
+ * `app.use(...)` line per session as each feature's router becomes
+ * available. Mounting a router whose module has no default export
+ * yet would throw at startup, so this file only ever imports
+ * routers that already exist on disk.
+ *
+ * As of the current session, all nine routers are mounted — the
+ * auth router from Session 1, and the eight feature routers
+ * (topics, documents, articles, reports, settings, version, users,
+ * and admin) added in Session 2.
  *
  * Env vars are loaded here via `import 'dotenv/config'` as a
  * defensive side effect. The real entry points (src/index.ts and
@@ -62,6 +66,14 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 
 import authRoutes from './features/auth/routes/authRoutes.js';
+import topicRoutes from './features/topics/routes/topicRoutes.js';
+import documentRoutes from './features/documents/routes/documentRoutes.js';
+import articleRoutes from './features/articles/routes/articleRoutes.js';
+import reportRoutes from './features/reports/routes/reportRoutes.js';
+import settingsRoutes from './features/settings/routes/settingsRoutes.js';
+import versionRoutes from './features/version/routes/versionRoutes.js';
+import userRoutes from './features/users/routes/userRoutes.js';
+import adminRoutes from './features/admin/routes/adminRoutes.js';
 import {
   errorHandler,
   notFoundHandler,
@@ -155,13 +167,29 @@ export const createApp = (): Express => {
   });
 
   // ---- 5b. API routes ----
-  // Auth is the only feature whose router exists at this point in
-  // the build. Later sessions add the remaining mounts:
-  // users, topics, documents, articles, reports, settings, version,
-  // and admin. Each is a one-line addition in its session; none of
-  // them can be mounted now because their route modules have no
-  // default export yet, and importing one would throw at startup.
+  // Every feature router is now mounted. The order follows the
+  // plan's session numbering — auth first (Session 1), then the
+  // eight Session 2 features — but the order is not semantic:
+  // each router owns a distinct path prefix, so no route in one
+  // can shadow a route in another. The registration order is
+  // preserved only so a reader scanning the file sees the same
+  // sequence the plan's session log uses.
+  //
+  // The auth router mounts `/api/auth` and exposes the login and
+  // me endpoints. The eight routers that follow are the Session 2
+  // feature routers, each mounted under its own `/api/<feature>`
+  // prefix. See each route file's own header for the specific
+  // paths it declares.
   app.use('/api/auth', authRoutes);
+
+    app.use('/api/topics', topicRoutes);
+  app.use('/api/documents', documentRoutes);
+  app.use('/api/articles', articleRoutes);
+  app.use('/api/reports', reportRoutes);
+  app.use('/api/settings', settingsRoutes);
+  app.use('/api/version', versionRoutes);
+  app.use('/api/users', userRoutes);
+  app.use('/api/admin', adminRoutes);
 
   // ---- 6. 404 handler ----
   // Runs when no route above matched. Registered after every real

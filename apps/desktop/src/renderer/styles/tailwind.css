@@ -1,0 +1,337 @@
+/**
+ * WriteSpeare — renderer stylesheet.
+ *
+ * This is the single CSS entry point for the entire renderer. It
+ * does three things, in order:
+ *
+ *   1. Emits Tailwind's three directive layers via the `@tailwind`
+ *      statements below. The Tailwind PostCSS plugin (registered
+ *      in `postcss.config.js`) replaces each `@tailwind` line
+ *      with the corresponding slice of generated CSS — the
+ *      preflight reset (`base`), the small set of component
+ *      classes Tailwind ships (`components`), and every utility
+ *      class actually used in the codebase (`utilities`, driven
+ *      by the `content` glob in `tailwind.config.js`).
+ *
+ *   2. Adds the app's own base styles inside a `@layer base`
+ *      block. Everything in this block sits below every Tailwind
+ *      utility in the cascade, so a component that needs a
+ *      different value can override any of these rules with a
+ *      utility class — no `!important`, no specificity war.
+ *
+ *   3. Styles the scrollbar via WebKit and Firefox pseudo-element
+ *      and pseudo-property selectors. This is outside the
+ *      `@layer base` block because scrollbar styling is not
+ *      something a utility class should ever need to override —
+ *      a component that wants a different scrollbar has to
+ *      provide its own wrapper element, not fight these rules.
+ *
+ * The `theme()` function — used in several rules below — is a
+ * Tailwind PostCSS feature, not native CSS. It resolves its
+ * argument against the values declared in `tailwind.config.js`
+ * at build time. `theme('colors.primary.DEFAULT')`, for example,
+ * is replaced with `#03A791` before the CSS reaches the browser.
+ * Using `theme()` instead of hard-coding the hex means a palette
+ * change in the config propagates here automatically, and the
+ * file has no hidden duplication of the design tokens.
+ *
+ * Dark mode — Tailwind is configured with `darkMode: 'class'` in
+ * `tailwind.config.js`, which means a `dark` class on the root
+ * `<html>` element enables every `dark:` variant in the codebase.
+ * The base styles below cooperate with that scheme: the `body`
+ * rule sets the light-mode colors, and an `html.dark body` rule
+ * overrides them for dark mode. The override uses Tailwind's
+ * built-in neutral palette rather than custom tokens because the
+ * app's own palette (primary, secondary, accent) does not declare
+ * dark-mode variants — it is a brand palette, not a light/dark
+ * palette pair. If a future design iteration specifies exact
+ * dark-mode brand values, they belong in `tailwind.config.js` and
+ * this rule updates to reference them.
+ */
+
+/* ============================================================
+ *  Tailwind directives
+ * ============================================================
+ *
+ *  Order is required, not arbitrary. `base` (the preflight
+ *  reset) must come first so that everything after it can build
+ *  on a clean slate. `components` follows so the few component
+ *  classes Tailwind ships are available to the app. `utilities`
+ *  comes last so that utility classes have the highest priority
+ *  in the cascade among the three layers, which is what makes
+ *  the "utility overrides component overrides base" contract
+ *  hold.
+ *
+ *  Reversing the order would produce a stylesheet where a
+ *  utility class could be overridden by the preflight reset —
+ *  the exact opposite of what the design system needs.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+ *  Base styles
+ * ============================================================
+ *
+ *  App-level rules that every page inherits. Everything in this
+ *  block can be overridden by a utility class in any component,
+ *  because `@layer base` places these rules below utilities in
+ *  the cascade.
+ */
+
+@layer base {
+  /*
+   * The layout root — full viewport height.
+   *
+   * The Electron window is the viewport. Every ancestor of the
+   * React tree is set to 100% height so that a page which wants
+   * to fill the window (a sidebar + main content layout, for
+   * example) does not need to know how tall the window is; it
+   * just uses `h-full` or `flex-1` and inherits the chain of
+   * 100% heights from here.
+   *
+   * Without this, `h-full` on a child element resolves against
+   * the parent's computed height, which is `auto` for a `<div>`
+   * with no explicit height — and `auto` means the child's own
+   * content height, which is almost never what the layout
+   * intends. Setting `html`, `body`, and `#root` to 100% breaks
+   * that cycle at the top of the tree.
+   */
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+
+  /*
+   * Body defaults — font, colors, smooth text rendering.
+   *
+   * The font stack is the one declared in `tailwind.config.js`
+   * (`Inter, system-ui, sans-serif`). The colors come from the
+   * same config's `text` and `background` tokens. `antialiased`
+   * applies the grayscale smoothing that Tailwind ships as a
+   * utility and that modern apps use by default for a cleaner
+   * rendering of thin font weights.
+   *
+   * `overscroll-behavior: none` disables the rubber-band overscroll
+   * that a browser tab produces when scrolled past its edges. In
+   * an Electron window this behaviour looks like a rendering
+   * glitch — the content bounces against the window frame — and
+   * the correct behaviour for a native-feeling desktop app is to
+   * stop scrolling at the content boundary. This is not a
+   * Tailwind utility; it is set as plain CSS.
+   */
+  body {
+    @apply bg-background text-text font-sans antialiased;
+    overscroll-behavior: none;
+  }
+
+  /*
+   * Dark-mode body colors.
+   *
+   * The `html.dark` selector matches when the root element has
+   * the `dark` class, which the renderer applies based on the
+   * user's stored `UserSettingsMap.theme` preference. The
+   * specific values (`neutral-900` for background, `neutral-100`
+   * for text) come from Tailwind's built-in neutral palette, not
+   * the app's brand palette — see the file header for why.
+   *
+   * This rule overrides the light-mode `body` rule above because
+   * it has higher specificity (`html.dark body` is two compound
+   * selectors where `body` is one). The override is intentional
+   * and does not require `!important` or a `@layer` escape hatch.
+   */
+  html.dark body {
+    @apply bg-neutral-900 text-neutral-100;
+  }
+
+  /*
+   * Text selection — brand-colored highlight.
+   *
+   * By default, the browser highlights selected text with the
+   * OS's accent color (blue on Windows, blue on macOS, a lighter
+   * blue on Linux). Using the app's primary-light token instead
+   * keeps the highlight visually consistent with the rest of the
+   * UI, and the dark text color ensures the selected text stays
+   * legible against the light-green background.
+   *
+   * `::selection` applies to user-selected text in a normal
+   * document flow. It does not apply to text inside form
+   * controls (`<input>`, `<textarea>`) on all browsers, so those
+   * elements will fall back to the OS default. That is acceptable
+   * — the contrast between the app highlight and the OS highlight
+   * is not jarring.
+   */
+  ::selection {
+    background-color: theme('colors.primary.light');
+    color: theme('colors.text');
+  }
+
+  /*
+   * Focus ring — visible, on-brand, and only on keyboard focus.
+   *
+   * The `:focus-visible` pseudo-class matches when the browser
+   * determines focus should be visible — currently, that means
+   * keyboard navigation and programmatic focus, but NOT a mouse
+   * click. This is the modern replacement for the older pattern
+   * of styling `:focus` and then trying to suppress it for mouse
+   * users with a `:focus:not(:focus-visible)` override.
+   *
+   * The outline uses the primary color (`#03A791`) at 2px with a
+   * 2px offset. The offset is what keeps the outline visually
+   * separate from the element it is applied to — a focused button
+   * shows a green ring with a small gap between the button's
+   * border and the ring, rather than a green border hugging the
+   * button's own edges.
+   *
+   * Using `outline` (rather than `box-shadow` or a `ring` utility)
+   * is deliberate: `outline` is drawn outside the element's layout
+   * box and never affects the element's size or position, so
+   * applying focus to an element does not cause the surrounding
+   * layout to shift by a couple of pixels. A `ring` (which is a
+   * box-shadow) sits inside the layout box on some configurations
+   * and can trigger reflow in flex containers.
+   */
+  :focus-visible {
+    outline: 2px solid theme('colors.primary.DEFAULT');
+    outline-offset: 2px;
+  }
+
+  /*
+   * Cursor affordances for interactive controls.
+   *
+   * Tailwind's preflight resets a lot of button styling but does
+   * NOT set `cursor: pointer` on `<button>` elements — the
+   * browser's default cursor for a `<button>` is the platform's
+   * arrow cursor, not the hand cursor that web users expect.
+   *
+   * The two rules below restore the web-idiomatic behaviour:
+   * enabled buttons show the pointer cursor, disabled buttons
+   * show the "not allowed" cursor so the user can tell at a
+   * glance that clicking will do nothing. The `[role="button"]`
+   * selector covers custom button-shaped elements that use the
+   * ARIA role instead of the native `<button>` tag — a pattern
+   * the app's `Modal` and `Sidebar` components are expected to
+   * use for clickable areas that are not semantically buttons.
+   *
+   * The `:not(:disabled)` and `:not([aria-disabled="true"])`
+   * guards ensure the disabled rule wins where both apply — a
+   * `<button disabled>` matches both `button` and `button:disabled`,
+   * and the second rule's higher specificity wins, giving the
+   * correct cursor for the disabled state.
+   */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role='button'][aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+}
+
+/* ============================================================
+ *  Scrollbar styling
+ * ============================================================
+ *
+ *  Custom scrollbars for the two rendering engines that will
+ *  ever render this stylesheet:
+ *
+ *    - Chromium (WebKit) — Electron's rendering engine. Uses the
+ *      `::-webkit-scrollbar-*` pseudo-elements.
+ *
+ *    - Gecko (Firefox) — a secondary target that only matters if
+ *      the same renderer is opened in a Firefox browser during
+ *      development (Vite's dev server serves the same HTML that
+ *      Electron loads). Uses the `scrollbar-*` CSS properties.
+ *
+ *  Both engines get the same visual treatment: a thin, rounded
+ *  thumb that is subtle in both light and dark modes.
+ *
+ *  These rules are NOT inside `@layer base` because their
+ *  selectors target pseudo-elements of the scrollbar machinery
+ *  itself, not the app's own elements. A utility class can style
+ *  an app element's `overflow` or `scrollbar-gutter`, but it
+ *  cannot reach inside the browser's scrollbar rendering — so
+ *  keeping these rules in a layer would not make them overridable
+ *  and would only add a level of indirection.
+ *
+ *  WebKit (Chromium):
+ *
+ *    `::-webkit-scrollbar` sets the overall size of the scrollbar
+ *    track. 10px is thin enough to be unobtrusive on a modern
+ *    high-DPI display and thick enough to be a comfortable
+ *    click target for dragging.
+ *
+ *    `::-webkit-scrollbar-track` is set to `transparent` rather
+ *    than a specific color so the underlying content shows
+ *    through behind the scrollbar. This is what gives the "floating
+ *    scrollbar" appearance that modern apps use.
+ *
+ *    `::-webkit-scrollbar-thumb` is the draggable handle. It uses
+ *    a neutral gray in light mode and a darker gray in dark mode,
+ *    with `background-clip: content-box` and a transparent border
+ *    creating a small visual inset from the scrollbar track edges
+ *    — the same technique GitHub, VS Code, and most modern
+ *    applications use to make the thumb look like a rounded pill
+ *    floating inside the track.
+ */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: theme('colors.neutral.300');
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: theme('colors.neutral.400');
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background-color: theme('colors.neutral.700');
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background-color: theme('colors.neutral.600');
+}
+
+/*
+ * Firefox (Gecko) — the equivalent treatment via the two
+ * standard properties that have shipped in Firefox since 64:
+ *
+ *   `scrollbar-width: thin` reduces the scrollbar to a narrow
+ *   form. The engine does not offer a way to specify the exact
+ *   width in pixels.
+ *
+ *   `scrollbar-color` takes two values — the thumb color first,
+ *   the track color second. The track is `transparent` to match
+ *   the WebKit treatment above.
+ *
+ * The `html.dark` override sits directly below so the light-mode
+ * rule sets one pair and the dark-mode rule replaces it with the
+ * other. Firefox resolves the two rules by cascade order (the
+ * later rule wins on the same selector set), which is the same
+ * mechanism the WebKit rules above use.
+ */
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: theme('colors.neutral.300') transparent;
+}
+
+html.dark {
+  scrollbar-color: theme('colors.neutral.700') transparent;
+}

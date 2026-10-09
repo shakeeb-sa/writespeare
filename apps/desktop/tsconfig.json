@@ -1,0 +1,193 @@
+{
+  // ============================================================
+  //  WriteSpeare — Desktop TypeScript Configuration
+  // ============================================================
+  //  A single config serves both compilation targets of the
+  //  desktop app:
+  //
+  //    - The Electron main process, under `src/main/`, compiled
+  //      by `tsc` (via the `build:main` script in package.json)
+  //      to `dist/main/` and executed by Electron under Node's
+  //      ESM loader.
+  //
+  //    - The React renderer, under `src/renderer/`, type-checked
+  //      by the same `tsc` run but bundled into `dist/renderer/`
+  //      by Vite. The compiled output of the renderer that `tsc`
+  //      writes is unused — Vite produces the actual runtime
+  //      bundle — but running the type check across it is
+  //      valuable, because a type error in a `.tsx` file should
+  //      fail `npm run type-check` the same way a type error in
+  //      a `.ts` file does.
+  //
+  //  The two targets have different runtime environments (Node
+  //  vs. browser) but share the same TypeScript language rules
+  //  and the same import convention — the `.js`-suffixed
+  //  specifier that points at a `.ts` source. That shared
+  //  convention is what makes a single config possible: both
+  //  targets resolve imports the same way, and the only
+  //  environment-specific difference is the set of global types
+  //  each target needs (Node globals for the main process, DOM
+  //  globals for the renderer), which is expressed by listing
+  //  both environments in the `lib` array.
+  //
+  //  The config is deliberately kept in lockstep with the
+  //  server's tsconfig where the two overlap. Any change to the
+  //  strictness flags here should be weighed against the same
+  //  change on the server; the two configs are the same shape on
+  //  purpose so that a reader who has internalised one has
+  //  internalised both.
+  // ============================================================
+
+  "compilerOptions": {
+    // ----------------------------------------------------------
+    //  File Layout
+    // ----------------------------------------------------------
+    //  `rootDir` is `src/` so that compiled paths mirror source
+    //  paths: `src/main/index.ts` → `dist/main/index.js`. The
+    //  `main` field of package.json points at
+    //  `dist/main/index.js`, so this mapping is what makes the
+    //  Electron entry point resolvable.
+    //
+    //  `outDir` is `dist/`, the same directory the renderer
+    //  build writes to. Vite writes to `dist/renderer/` (per
+    //  `build.outDir` in vite.config.ts); `tsc` writes to
+    //  whatever subdirectory each source file's path dictates.
+    //  The two writers never collide, because Vite clears only
+    //  its own subdirectory and `tsc` never writes to
+    //  `dist/renderer/`.
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    // ----------------------------------------------------------
+    //  Environment Settings
+    // ----------------------------------------------------------
+    //  `module` and `moduleResolution` are `NodeNext`, matching
+    //  the server config and the codebase-wide convention of
+    //  `.js`-suffixed import specifiers that resolve to `.ts`
+    //  sources. NodeNext is the only resolution mode that
+    //  requires the runtime extension to be present in the
+    //  source, which is exactly what the codebase does — so
+    //  NodeNext is the only mode that will accept the imports
+    //  as written.
+    //
+    //  `target` is ES2022. Electron 44 ships a modern V8 that
+    //  supports all of ES2022 natively, and the renderer is
+    //  bundled by Vite which does not care about the target. The
+    //  choice between ES2020 and ES2022 is invisible to the
+    //  running app; ES2022 is used here for consistency with the
+    //  `lib` list below.
+    //
+    //  `lib` lists both DOM and ES2022. DOM is needed by the
+    //  renderer (for `document`, `window`, `HTMLElement`, and
+    //  every other browser global). ES2022 is needed by both
+    //  targets. Listing both libraries in a single config means
+    //  a main-process file could technically reference a DOM
+    //  global without the compiler complaining — an acceptably
+    //  small risk given the alternative would be two configs and
+    //  a project-references setup that the plan does not
+    //  declare.
+    //
+    //  `jsx` is `react-jsx`, the automatic JSX runtime introduced
+    //  in React 17 and used exclusively by React 19. It means
+    //  `.tsx` files do not need to `import React from 'react'`
+    //  at the top — the compiler inserts the runtime import
+    //  automatically.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+
+    // ----------------------------------------------------------
+    //  Outputs
+    // ----------------------------------------------------------
+    //  Sourcemaps are emitted for both targets. Vite produces
+    //  its own renderer sourcemaps (see `build.sourcemap` in
+    //  vite.config.ts); the sourcemaps produced here cover the
+    //  main-process build, which is what a stack trace from the
+    //  Electron main process will need in order to be readable.
+    "sourceMap": true,
+
+    // ----------------------------------------------------------
+    //  Strict Typechecking
+    // ----------------------------------------------------------
+    //  Identical set to the server config. See the server's
+    //  tsconfig.json for the reasoning behind each flag; the
+    //  same reasoning applies here verbatim.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+
+    // ----------------------------------------------------------
+    //  Style / Hygiene
+    // ----------------------------------------------------------
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+
+    // ----------------------------------------------------------
+    //  Recommended / Module Hygiene
+    // ----------------------------------------------------------
+    //  `isolatedModules` is required by Vite. Vite's transform
+    //  pipeline handles one file at a time and cannot see the
+    //  whole module graph, so it depends on the compiler having
+    //  already enforced that every file is independently
+    //  transpilable. This flag is what guarantees that.
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force",
+
+    //  `skipLibCheck` is enabled — even more important for the
+    //  desktop app than for the server, because Electron's
+    //  bundled `.d.ts` files are large and occasionally reference
+    //  types from other libraries that are not installed in a
+    //  given configuration. Skipping the check means a `.d.ts`
+    //  file authored by a third party cannot break the app's
+    //  build by being slightly out of date with its own
+    //  dependencies.
+    "skipLibCheck": true,
+
+    //  `esModuleInterop` and `allowSyntheticDefaultImports` are
+    //  both enabled, matching the server config. They let code
+    //  written against CommonJS modules (some Electron packages,
+    //  some Node builtins) be imported with a default-import
+    //  syntax that would otherwise be a type error.
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    //  `forceConsistentCasingInFileNames` is required on a
+    //  project that builds on Windows and is likely to be
+    //  checked out on a case-insensitive filesystem. It ensures
+    //  that an import of `./Foo` does not accidentally resolve
+    //  to `./foo` on the developer's machine and then fail on
+    //  a case-sensitive CI runner.
+    "forceConsistentCasingInFileNames": true,
+
+    //  `resolveJsonModule` is enabled so that a source file can
+    //  import a `.json` file (for example, `package.json` for a
+    //  version string, or a config fixture) with a typed
+    //  import. No file currently does, but the flag costs
+    //  nothing and prevents a future surprise.
+    "resolveJsonModule": true
+  },
+
+  // ----------------------------------------------------------
+  //  Scope
+  // ----------------------------------------------------------
+  //  Every source file under `src/` is included. The main
+  //  process, the renderer, the features, the shared utilities —
+  //  all of it — is type-checked by a single `tsc` run.
+  //
+  //  `exclude` covers the three directories that never contain
+  //  TypeScript source: `node_modules/` (dependencies),
+  //  `dist/` (compiled output), and `release/` (electron-builder
+  //  packaging output). None of them would contain a `.ts` or
+  //  `.tsx` file, but listing them explicitly is the correct
+  //  hygiene and prevents a stray generated file from being
+  //  pulled into the compilation.
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "release"]
+}

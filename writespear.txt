@@ -378,7 +378,6 @@ apps/
 .env.example
 .gitattributes
 .gitignore
-create-structure.bat
 package.json
 </directory_structure>
 
@@ -1300,7 +1299,282 @@ vite.config.d.ts
 </file>
 
 <file path="apps/server/handler/index.ts">
+/**
+ * Vercel serverless entry point for the WriteSpeare backend.
+ *
+ * Exports one async function that Vercel invokes for every HTTP
+ * request routed to this deployment. The function's job is
+ * narrow:
+ *
+ *   1. Ensure the MongoDB connection is live. On a cold start
+ *      this means awaiting `connectDB()`; on a warm start it
+ *      reuses the connection the previous request opened.
+ *
+ *   2. Hand the request to the shared Express app from
+ *      `src/app.ts`, which owns all routing, middleware, and
+ *      error handling. Nothing in this file needs to know what
+ *      routes exist.
+ *
+ * The file deliberately does not duplicate any middleware or
+ * route logic. Everything below the connection check is a single
+ * `return app(req, res)` call — the Express app does the work, and
+ * the two entry points (`src/index.ts` for local development and
+ * this file for Vercel) stay in lockstep by sharing the same app
+ * instance.
+ *
+ * Why the connection is cached in a module-level promise:
+ *
+ *   Vercel keeps a warm serverless process alive across requests.
+ *   Reconnecting to MongoDB on every invocation would exhaust the
+ *   connection pool, add 50–200 ms of latency to each request
+ *   during the handshake, and — on MongoDB Atlas's free tier —
+ *   burn through the monthly connection limit in a few hours.
+ *   Caching the *promise* (rather than the resulting connection
+ *   object) means two concurrent cold-start requests both await
+ *   the same in-flight connection attempt rather than racing to
+ *   open two.
+ *
+ *   If a connection attempt fails, the cache is cleared so the
+ *   next request retries from a clean slate. Without that reset,
+ *   a single transient failure would leave the process holding a
+ *   rejected promise and every subsequent request would fail with
+ *   the same stale error for the life of the process.
+ *
+ * Why a diagnostic endpoint exists:
+ *
+ *   A 500 from a Vercel deployment with no log access is one of
+ *   the hardest failure modes to debug — the platform's own logs
+ *   often lag by minutes, and the deployed environment differs
+ *   from local in ways that are invisible without introspection.
+ *   The `/api/diagnostic` branch short-circuits the Express app
+ *   and answers with the resolved environment and connection
+ *   state. It is read-only: it reports booleans and masked
+ *   strings, never the secret values themselves, and never
+ *   mutates anything.
+ *
+ *   The endpoint is deliberately narrow. It runs BEFORE Express
+ *   so a failure in the app's middleware chain cannot prevent the
+ *   diagnostic from answering. And it is scoped to the exact
+ *   `/api/diagnostic` prefix, so no legitimate route can collide
+ *   with it.
+ *
+ * Type-only imports:
+ *
+ *   `VercelRequest` and `VercelResponse` are imported with the
+ *   `import type` form. They are erased by the compiler, so no
+ *   runtime require of `@vercel/node` is emitted — the package is
+ *   a devDependency, and the compiled output must not depend on
+ *   its presence at deploy time.
+ */
 
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import mongoose from 'mongoose';
+
+import app from '../src/app.js';
+import { connectDB } from '../src/features/shared/config/db.js';
+
+// ============================================================
+//  Connection cache
+// ============================================================
+
+/**
+ * A single in-flight or resolved connection promise, shared
+ * across every invocation within a warm process.
+ *
+ *   `null`  — no connection has been attempted in this process
+ *             yet, OR the last attempt failed and the cache was
+ *             reset.
+ *   Promise — either an in-flight connection or a resolved one.
+ *             Awaiting the same promise from multiple concurrent
+ *             requests is safe: the first one performs the
+ *             handshake, the rest receive the same resolution.
+ *
+ * Mutated only by `ensureDB` below. Never exported.
+ */
+let dbReady: Promise<void> | null = null;
+
+/**
+ * Return a promise that resolves once the database is connected.
+ *
+ * On the first call after a cold start (or after a failed
+ * attempt), starts a new `connectDB()` and caches the promise. On
+ * every subsequent call, returns the cached promise unchanged.
+ *
+ * If the underlying `connectDB()` rejects, the cache is cleared
+ * before the rejection propagates. That is what lets the NEXT
+ * request retry rather than being permanently wedded to a dead
+ * promise for the life of the process.
+ *
+ * The re-throw is deliberate — the caller must see the failure
+ * so it can return a 500 with an explanation. The reset is
+ * equally deliberate — the failure must not be sticky.
+ */
+const ensureDB = (): Promise<void> => {
+  if (!dbReady) {
+    dbReady = connectDB().catch((err: unknown) => {
+      console.error('MongoDB connection failed:', err);
+      dbReady = null;
+      throw err;
+    });
+  }
+  return dbReady;
+};
+
+// ============================================================
+//  Diagnostics helpers
+// ============================================================
+
+/**
+ * Mask the credentials portion of a MongoDB connection URI so it
+ * can be safely included in a diagnostic response.
+ *
+ * A URI of the shape `mongodb+srv://user:pass@host/db` becomes
+ * `mongodb+srv://user:***@host/db`. The username is left in place
+ * — it is not a secret on its own, and seeing it confirms which
+ * cluster the process is talking to. The password is the only
+ * credential that would allow an attacker to open the database,
+ * so it is the only field the mask replaces.
+ *
+ * Returns `'NOT SET'` when the input is null or empty so a caller
+ * does not have to distinguish "no URI configured" from "URI
+ * configured but unparseable". A URI that does not match the
+ * user:pass pattern is returned unchanged with a trailing
+ * `'(unrecognized format — inspect manually)'` note so the
+ * diagnostic is honest rather than silently misleading.
+ */
+const maskMongoUri = (uri: string | undefined): string => {
+  if (typeof uri !== 'string' || uri.length === 0) {
+    return 'NOT SET (falls back to mongodb://localhost:27017/writespeare)';
+  }
+  const masked = uri.replace(/:\/\/([^:]+):([^@]+)@/, '://$1:***@');
+  if (masked === uri && uri.includes('://')) {
+    // The pattern did not match but the string looks like a URI.
+    // Most likely an unauthenticated URI (no credentials to mask)
+    // or an unusual scheme. Return it with a note rather than
+    // pretend masking happened.
+    return `${uri} (no credentials present — nothing to mask)`;
+  }
+  return masked;
+};
+
+// ============================================================
+//  Handler
+// ============================================================
+
+/**
+ * The Vercel serverless handler.
+ *
+ * Flow, in order:
+ *
+ *   1. If the incoming URL begins with `/api/diagnostic`, answer
+ *      the diagnostic probe and return. This branch runs BEFORE
+ *      the database check so a diagnostic works even when the
+ *      database is unreachable — which is exactly the scenario
+ *      the diagnostic exists to help debug.
+ *
+ *   2. Otherwise, await `ensureDB()`. If the connection cannot be
+ *      established, respond with a 500 and a short, non-leaking
+ *      error message. The full error is logged for the operator;
+ *      the client sees a bounded explanation.
+ *
+ *   3. Hand the request to the shared Express app and return its
+ *      response. From this point on, this file has no
+ *      responsibility — routing, middleware, and error handling
+ *      all live in the app.
+ *
+ * The return type is `Promise<unknown>` rather than
+ * `Promise<void>` because the Express app's `app(req, res)` call
+ * has a return value (the `Server` instance in some overloads)
+ * that this function deliberately passes through rather than
+ * discards. Neither Vercel nor Express cares about the return
+ * value in a serverless context, but returning it keeps the
+ * function transparent — a caller inspecting the result sees
+ * exactly what Express returned.
+ */
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+): Promise<unknown> {
+  // ============================================================
+  //  Diagnostic branch
+  // ============================================================
+  //
+  // Runs before the database check so it answers even when the
+  // database is down. Reports booleans and a masked URI, never
+  // the secret values themselves.
+
+  if (typeof req.url === 'string' && req.url.startsWith('/api/diagnostic')) {
+    const info: Record<string, unknown> = {
+      mongoUriPresent: Boolean(process.env['MONGODB_URI']),
+      mongoUriMasked: maskMongoUri(process.env['MONGODB_URI']),
+      jwtSecretPresent: Boolean(process.env['JWT_SECRET']),
+      nodeEnv: process.env['NODE_ENV'] ?? '(unset)',
+      readyStateBefore: mongoose.connection.readyState,
+    };
+
+    try {
+      await ensureDB();
+      info['connectResult'] = 'resolved';
+    } catch (err: unknown) {
+      info['connectResult'] = 'threw';
+      info['connectError'] =
+        err instanceof Error ? err.message : String(err);
+    }
+
+    info['readyStateAfter'] = mongoose.connection.readyState;
+
+    // The `?.` on `connection.db` is required: mongoose types the
+    // field as `Db | undefined` and a diagnostic must not assume
+    // a live handle just because `readyState` looks healthy.
+    try {
+      await mongoose.connection.db?.admin().command({ ping: 1 });
+      info['pingResult'] = 'ok';
+    } catch (err: unknown) {
+      info['pingResult'] = 'failed';
+      info['pingError'] =
+        err instanceof Error ? err.message : String(err);
+    }
+
+    res.status(200).json(info);
+    return undefined;
+  }
+
+  // ============================================================
+  //  Normal request path
+  // ============================================================
+
+  try {
+    await ensureDB();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    // The full error is logged for the operator. The client sees
+    // only the first line of the message, prefixed with a stable
+    // label, so a misconfigured MONGODB_URI does not leak the URI
+    // itself back to an unauthenticated caller. The URI is
+    // routinely echoed in driver-level error messages.
+    console.error('Handler: database unavailable:', err);
+    const safeMessage = message.split('\n')[0] ?? 'Unknown error';
+    res.status(500).json({
+      success: false,
+      error: `Database connection failed: ${safeMessage}`,
+    });
+    return undefined;
+  }
+
+  return app(req, res);
+}
+
+// ============================================================
+//  Named re-export
+// ============================================================
+//
+// A caller that prefers `import { handler } from './handler/index.js'`
+// over the default import gets the same function. Vercel itself
+// accepts either form; the named export exists so a future test
+// harness can import the handler without pulling the whole module
+// through the default-export convention.
+
+export { handler };
 </file>
 
 <file path="apps/server/src/features/admin/controllers/adminController.ts">
@@ -4350,7 +4624,234 @@ export interface Env {
 </file>
 
 <file path="apps/server/src/features/shared/utils/seedAdmin.ts">
+/**
+ * Admin seeder for the WriteSpeare backend.
+ *
+ * Reads ADMIN_EMAIL and ADMIN_PASSWORD from the environment,
+ * connects to MongoDB, and creates the super-admin user if one
+ * with that email does not already exist. Run once after the
+ * database is provisioned and the .env file is populated:
+ *
+ *     npm run seed
+ *
+ * The npm script (`"seed": "tsx src/features/shared/utils/seedAdmin.ts"`)
+ * invokes this file directly. When `tsx` runs it, the IIFE at the
+ * bottom of the file drives the whole lifecycle — seed, disconnect,
+ * exit — with a status code the shell can inspect:
+ *
+ *     0  success (including the "already existed" no-op case)
+ *     1  any failure (missing env var, weak password, database
+ *        error, email collision with a non-admin user)
+ *
+ * Idempotency
+ * -----------
+ * Running the seed more than once is safe. The second run finds
+ * the admin created on the first run (matched by email) and exits
+ * successfully without modifying anything. The email is the
+ * identity anchor: same email + existing admin = no-op.
+ *
+ * Safety rails
+ * ------------
+ *   - ADMIN_EMAIL is trimmed and lowercased to match the
+ *     normalization the User schema applies on store. Without
+ *     this, seeding with "Admin@Example.com" would create a user
+ *     that a subsequent login with "admin@example.com" could not
+ *     find — the schema lowercases on save, but only after the
+ *     first write, so the in-memory value the seeder thought it
+ *     created would not match what the login path looks for.
+ *
+ *   - ADMIN_PASSWORD must be at least eight characters. The seed
+ *     is the one place a human types an admin password directly,
+ *     so it is also the one place a weak password can reach the
+ *     database without passing through any form validation.
+ *     Refusing to seed a short password is the correct default:
+ *     an admin account with a three-character password is a
+ *     production incident waiting to happen.
+ *
+ *   - If a user with the target email already exists but is NOT
+ *     an admin, the seed throws rather than silently promoting
+ *     them or silently returning a success. The operator either
+ *     chose the wrong email, or they intend to promote that user
+ *     through the admin panel — both are decisions the seed script
+ *     does not have the context to make on its own.
+ *
+ *   - The password is passed as plaintext to the User model's
+ *     `passwordHash` field. The model's pre-save hook detects
+ *     that the value does not match the bcrypt hash pattern and
+ *     hashes it before persisting. This mirrors how `loginUser`
+ *     handles a new user's password, and it means the seeder
+ *     never needs to import the bcrypt helpers directly.
+ *
+ * Module-scope side effect
+ * ------------------------
+ * The IIFE at the bottom of the file runs whenever this module is
+ * evaluated, including when it is imported by another module. That
+ * is deliberate and matches the pattern established in ROOKIE's
+ * seedAdmin. It has two consequences a future reader should be
+ * aware of:
+ *
+ *   - Running `tsx src/features/shared/utils/seedAdmin.ts` (which
+ *     `npm run seed` does) triggers the whole lifecycle and exits
+ *     the process — exactly what a CLI script should do.
+ *
+ *   - Importing `{ seedAdmin }` from a test or a script would also
+ *     trigger the IIFE and exit the process, which is not what a
+ *     test would want. If a programmatic caller is ever needed,
+ *     the correct fix is to extract the logic into a sibling
+ *     `seedAdminCore.ts` and leave this file as a thin wrapper
+ *     around it. That refactor is not required today.
+ */
 
+import 'dotenv/config';
+
+import { UserModel, type UserDocument } from '../../auth/models/User.js';
+import { UserRole } from '../types/index.js';
+import { connectDB, disconnectDB } from '../config/db.js';
+
+// ============================================================
+//  Constants
+// ============================================================
+
+/**
+ * Minimum length accepted for the ADMIN_PASSWORD environment
+ * variable.
+ *
+ * Eight characters is the shortest conventional baseline. A
+ * shorter value is nearly always a placeholder that was forgotten
+ * about — the example in `.env.example` uses a much longer string
+ * for exactly that reason — and catching it at seed time is
+ * cheaper than discovering it in production.
+ */
+const MIN_ADMIN_PASSWORD_LENGTH = 8;
+
+// ============================================================
+//  Public API
+// ============================================================
+
+/**
+ * Create the super-admin user if one with the configured email
+ * does not already exist.
+ *
+ * Returns the admin document in both the "created" and "already
+ * existed" cases so a caller can log the resulting account. Throws
+ * on any configuration or database failure — the caller (the IIFE
+ * below, or a future test harness) decides whether to exit or
+ * retry.
+ *
+ * The function connects to MongoDB itself rather than requiring
+ * the caller to do so. That keeps the script self-contained when
+ * run directly via `tsx`, and it means a test that has already
+ * opened a connection reuses it — `connectDB` is idempotent.
+ */
+export const seedAdmin = async (): Promise<UserDocument> => {
+  // ---- 1. Read and validate environment ----
+  const rawEmail = process.env['ADMIN_EMAIL'];
+  const rawPassword = process.env['ADMIN_PASSWORD'];
+
+  if (typeof rawEmail !== 'string' || rawEmail.trim().length === 0) {
+    throw new Error(
+      'ADMIN_EMAIL environment variable is not set. ' +
+        'Set it in apps/server/.env before running the seed.'
+    );
+  }
+
+  if (
+    typeof rawPassword !== 'string' ||
+    rawPassword.length < MIN_ADMIN_PASSWORD_LENGTH
+  ) {
+    throw new Error(
+      `ADMIN_PASSWORD environment variable must be at least ` +
+        `${MIN_ADMIN_PASSWORD_LENGTH} characters. ` +
+        `Set it in apps/server/.env before running the seed.`
+    );
+  }
+
+  const adminEmail = rawEmail.trim().toLowerCase();
+
+  // ---- 2. Connect to the database ----
+  // `connectDB` is idempotent — a caller that already opened a
+  // connection reuses it rather than opening a second one. The
+  // matching `disconnectDB` runs in the IIFE below, on both the
+  // success and failure paths.
+  await connectDB();
+
+  // ---- 3. Look for an existing user with this email ----
+  const existing = await UserModel.findOne({ email: adminEmail });
+
+  if (existing) {
+    if (existing.role === UserRole.ADMIN) {
+      console.log(`Admin user already exists: ${adminEmail}`);
+      return existing;
+    }
+
+    // A non-admin user with this email already exists. Refuse to
+    // modify their role silently — the operator either mistyped
+    // the email, or they intend to promote this user, and neither
+    // is a decision this script has the context to make.
+    throw new Error(
+      `A user with email "${adminEmail}" already exists but is ` +
+        `not an admin. Choose a different ADMIN_EMAIL, or promote ` +
+        `the user through the admin panel.`
+    );
+  }
+
+  // ---- 4. Create the admin ----
+  // The plaintext password is passed to `passwordHash`. The User
+  // model's pre-save hook detects that the value does not match
+  // the bcrypt hash pattern and hashes it before persisting.
+  const newAdmin = new UserModel({
+    email: adminEmail,
+    passwordHash: rawPassword,
+    role: UserRole.ADMIN,
+    active: true,
+  });
+
+  await newAdmin.save();
+  console.log(`Admin user created successfully: ${adminEmail}`);
+  return newAdmin;
+};
+
+// ============================================================
+//  Standalone execution
+// ============================================================
+//
+// The IIFE below runs whenever this module is evaluated — that
+// includes both "run directly via tsx" and "imported by another
+// module". See the file header for the consequences and for the
+// refactor that would remove the import-time side effect if a
+// programmatic caller ever needs it.
+
+(async () => {
+  try {
+    await seedAdmin();
+    await disconnectDB();
+    console.log('Admin seeding completed.');
+    process.exit(0);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Admin seeding failed: ${message}`);
+
+    // Best-effort cleanup. The process is about to exit regardless
+    // of whether the disconnect succeeds, and a failure here must
+    // not mask the original error — which is the one the operator
+    // actually needs to see.
+    try {
+      await disconnectDB();
+    } catch {
+      // swallow — see comment above
+    }
+
+    process.exit(1);
+  }
+})();
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default {
+  seedAdmin,
+};
 </file>
 
 <file path="apps/server/src/features/topics/controllers/topicController.ts">
@@ -4358,7 +4859,334 @@ export interface Env {
 </file>
 
 <file path="apps/server/src/features/topics/models/Topic.ts">
+/**
+ * Mongoose model for the WriteSpeare Topic entity.
+ *
+ * A Topic is the atomic unit of work in WriteSpeare: one title
+ * in, one article out. Every Document, Article, and Report
+ * references its owning Topic by `_id`. The Topic document is
+ * where the user's per-topic choices live — which preset they
+ * picked, which profile, which prompt template, how many sources
+ * and how many words they asked for — plus the runtime status
+ * that tracks where the pipeline currently is.
+ *
+ * Responsibilities:
+ *
+ *   1. Enforce the schema-level invariants of a topic record:
+ *      a non-empty title, legal values for the three closed
+ *      unions (status / preset / profile), numeric ranges on the
+ *      two count fields, and a bounded error string.
+ *
+ *   2. Own the indexes that make the two access patterns the
+ *      Topics page exercises efficient:
+ *
+ *        - "list every topic belonging to the current user,
+ *           newest first" — served by { userId, createdAt }.
+ *        - "filter the current user's topics by status" —
+ *           served by { userId, status }.
+ *
+ *      Both indexes are compound with `userId` as the prefix
+ *      because every query on this collection is scoped to a
+ *      single user. A bare `{ status }` index would never be
+ *      used: no code path queries topics across all users, and
+ *      adding a wide cross-user index would slow writes for no
+ *      read benefit.
+ *
+ *   3. Provide a single `toJSON` transform that strips Mongoose's
+ *      `__v` version field, so a Topic serialised to the client
+ *      matches the `Topic` interface from `shared/types` exactly.
+ *      Without this, every response would carry an extra
+ *      `__v: 0` field that the TypeScript type on the renderer
+ *      side does not declare — the kind of small drift that
+ *      eventually causes a runtime bug in code that iterates
+ *      `Object.keys(topic)`.
+ *
+ * What this model does NOT do:
+ *
+ *   - It does not run business logic. The pipeline state
+ *     transitions (draft → researching → extracting → …) are
+ *     enforced by the topic service, which has the context to
+ *     validate them against the caller's identity and the
+ *     operation they are performing. The schema only knows the
+ *     closed set of legal status values; it does not know which
+ *     transitions are legal from which state.
+ *
+ *   - It does not enforce per-user uniqueness on `title`. A user
+ *     may legitimately create two topics with the same title —
+ *     for example, a rewrite under a different preset, or a
+ *     duplicate they intend to edit before running. The plan's
+ *     UI explicitly supports a "Duplicate" action that relies
+ *     on this being allowed.
+ *
+ * Type unions vs. runtime enums:
+ *
+ *   The `TopicStatus`, `PresetName`, and `ProfileName` types in
+ *   `shared/types` are string-literal union types, not runtime
+ *   enums. A union type does not exist at runtime — it is erased
+ *   by the compiler. To give Mongoose a runtime `enum` option
+ *   for each field, this file declares an explicit array of the
+ *   legal values. The three arrays are the ONLY runtime source
+ *   of truth for what values are legal; if the union types in
+ *   `shared/types` ever change, these arrays must be updated in
+ *   the same commit or the schema and the types will drift. The
+ *   pattern is intentionally verbose in exchange for being easy
+ *   to grep and easy to audit against the shared types.
+ */
 
+import mongoose, { Schema, Document } from 'mongoose';
+import {
+  Topic,
+  TopicStatus,
+  PresetName,
+  ProfileName,
+} from '../../shared/types/index.js';
+
+// ============================================================
+//  Document interface
+// ============================================================
+
+/**
+ * The runtime shape of a Topic document as returned by Mongoose.
+ *
+ * Extends `Omit<Topic, '_id'>` (the shared domain interface minus
+ * its loosely-typed `_id`) and then re-declares `_id` with the
+ * concrete ObjectId type Mongoose actually produces in-process.
+ * This is the same pattern as `UserDocument` in
+ * `features/auth/models/User.ts`: the shared domain type stays
+ * transport-agnostic (its `_id` is `string | ObjectId` so it can
+ * cross JSON boundaries), while the document interface pins
+ * `_id` to what the ODM gives you.
+ *
+ * No instance methods are declared on this interface. Unlike the
+ * User model — which needs a `comparePassword` method to keep
+ * the bcrypt library out of the service layer — a Topic has no
+ * per-document behaviour beyond what Mongoose provides out of the
+ * box (save, validate, toJSON). Business logic lives in the
+ * service.
+ */
+export interface TopicDocument extends Omit<Topic, '_id'>, Document {
+  _id: mongoose.Types.ObjectId;
+}
+
+// ============================================================
+//  Legal values (runtime counterparts of the union types)
+// ============================================================
+//
+// Each array is annotated with its union type, which gives us a
+// compile-time guarantee that every string in the array is a
+// member of the union. A typo such as 'complete' instead of
+// 'completed' would be flagged by tsc — the one class of drift
+// this pattern is designed to catch. What it does NOT catch is a
+// value MISSING from the array (a new union member added without
+// a corresponding array update); that has to be caught by a
+// reviewer or by an integration test that tries to save every
+// legal status.
+
+const TOPIC_STATUS_VALUES: TopicStatus[] = [
+  'draft',
+  'researching',
+  'extracting',
+  'extracted',
+  'writing',
+  'validating',
+  'completed',
+  'failed',
+];
+
+const PRESET_NAME_VALUES: PresetName[] = [
+  'quick',
+  'balanced',
+  'deep',
+  'custom',
+];
+
+const PROFILE_NAME_VALUES: ProfileName[] = [
+  'blog-post',
+  'news-article',
+  'product-review',
+  'academic',
+];
+
+// ============================================================
+//  Schema
+// ============================================================
+
+const TopicSchema = new Schema<TopicDocument>(
+  {
+    // ---- Ownership ----
+    // Every topic belongs to exactly one user. This field is the
+    // anchor for every query and every authorization check: a
+    // request may only read or mutate a topic where
+    // `topic.userId === req.user.userId`. Indexed below as part
+    // of both compound indexes.
+    userId: {
+      type: Schema.Types.ObjectId,
+      required: [true, 'userId is required'],
+    },
+
+    // ---- User-supplied fields ----
+    title: {
+      type: String,
+      required: [true, 'Title is required'],
+      trim: true,
+      minlength: [3, 'Title must be at least 3 characters.'],
+      maxlength: [300, 'Title must be at most 300 characters.'],
+    },
+
+    // Keywords arrive as an array of strings. Mongoose will
+    // attempt to cast each element to a string on write; a value
+    // that cannot be cast throws a CastError, which the terminal
+    // error middleware maps to a 400. The service layer is
+    // expected to have already trimmed and filtered empty strings
+    // before calling save — the schema accepts what it is given
+    // rather than silently mutating the array, so a bug in the
+    // service's sanitization is visible rather than masked.
+    keywords: {
+      type: [String],
+      default: [],
+    },
+
+    // ---- Pipeline configuration ----
+    preset: {
+      type: String,
+      enum: {
+        values: PRESET_NAME_VALUES,
+        message: 'Preset must be one of: quick, balanced, deep, custom.',
+      },
+      default: 'balanced',
+      required: true,
+    },
+    profile: {
+      type: String,
+      enum: {
+        values: PROFILE_NAME_VALUES,
+        message:
+          'Profile must be one of: blog-post, news-article, product-review, academic.',
+      },
+      default: 'blog-post',
+      required: true,
+    },
+    promptFile: {
+      type: String,
+      default: 'default.md',
+      trim: true,
+      maxlength: [200, 'promptFile must be at most 200 characters.'],
+    },
+    wordCount: {
+      type: Number,
+      default: 1200,
+      min: [100, 'wordCount must be at least 100.'],
+      max: [10000, 'wordCount must be at most 10000.'],
+      validate: {
+        // The built-in Number type in Mongoose is a double. Word
+        // counts are conceptually integers — a target of "1200.5
+        // words" is meaningless and would only appear if a caller
+        // passed a float by mistake. This validator catches that
+        // at the schema boundary so no downstream consumer has to
+        // think about rounding.
+        validator: (value: number) => Number.isInteger(value),
+        message: 'wordCount must be an integer.',
+      },
+    },
+    sourceCount: {
+      type: Number,
+      default: 10,
+      min: [1, 'sourceCount must be at least 1.'],
+      max: [50, 'sourceCount must be at most 50.'],
+      validate: {
+        validator: (value: number) => Number.isInteger(value),
+        message: 'sourceCount must be an integer.',
+      },
+    },
+
+    // ---- Runtime status ----
+    // The closed set of pipeline states. The schema validates
+    // that the value is one of them; it does not enforce which
+    // transitions between them are legal. That is the service's
+    // job — see the file header.
+    status: {
+      type: String,
+      enum: {
+        values: TOPIC_STATUS_VALUES,
+        message:
+          'Status must be one of: draft, researching, extracting, ' +
+          'extracted, writing, validating, completed, failed.',
+      },
+      default: 'draft',
+      required: true,
+    },
+
+    // ---- Failure detail ----
+    // Populated only when `status === 'failed'`. The schema does
+    // not enforce that invariant — the service sets and clears
+    // this field in step with the status transition. Bounded at
+    // 2000 characters to match the truncation the pipeline
+    // already applies to error messages before they reach this
+    // field.
+    error: {
+      type: String,
+      trim: true,
+      maxlength: [2000, 'error must be at most 2000 characters.'],
+    },
+  },
+  {
+    timestamps: true,
+    toJSON: {
+      transform: (_doc, ret) => {
+        delete ret['__v'];
+        return ret;
+      },
+    },
+  }
+);
+
+// ============================================================
+//  Indexes
+// ============================================================
+//
+//  Two compound indexes cover every read path the Topics page
+//  exercises. Both are prefixed by `userId` because every query
+//  on this collection is scoped to a single authenticated user;
+//  a query across all users is not a supported operation, so an
+//  index without the userId prefix would never be selected by
+//  the query planner.
+//
+//    { userId: 1, createdAt: -1 }
+//      Serves the default "list my topics, newest first" view.
+//      The `-1` on createdAt means the sort is ascending-index /
+//      descending-scan — the sort clause in the query does not
+//      need a separate in-memory sort step.
+//
+//    { userId: 1, status: 1 }
+//      Serves the "filter my topics by status" view, and by
+//      extension the two-index intersection the planner picks
+//      for "filter by status, sorted by createdAt": MongoDB 4.4+
+//      can combine the two indexes rather than falling back to a
+//      collection scan.
+//
+//  A third index on `{ userId: 1, title: 1 }` was considered for
+//  the "search my topics by title substring" workflow and
+//  deliberately not added: a leading-substring search is not an
+//  indexed operation regardless of the index shape, and a full-
+//  text index would force a different query structure on the
+//  renderer side. If title search becomes a requirement, the
+//  correct index is a text index on { title } with a compound
+//  variant, and that is a decision for a future session.
+
+TopicSchema.index({ userId: 1, createdAt: -1 });
+TopicSchema.index({ userId: 1, status: 1 });
+
+// ============================================================
+//  Model
+// ============================================================
+
+export const TopicModel = mongoose.model<TopicDocument>('Topic', TopicSchema);
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default TopicModel;
 </file>
 
 <file path="apps/server/src/features/topics/routes/topicRoutes.ts">
@@ -4366,7 +5194,325 @@ export interface Env {
 </file>
 
 <file path="apps/server/src/features/topics/services/topicService.ts">
+/**
+ * Business logic for the WriteSpeare Topic entity.
+ *
+ * Five CRUD operations, each ownership-scoped. See the file
+ * header in the source repository for the design rationale.
+ */
 
+import { TopicModel, type TopicDocument } from '../models/Topic.js';
+import type {
+  MongoId,
+  TopicStatus,
+  TopicCreatePayload,
+  TopicUpdatePayload,
+} from '../../shared/types/index.js';
+import { AppError } from '../../shared/middleware/errorHandler.js';
+
+// ============================================================
+//  createTopic
+// ============================================================
+
+/**
+ * Create a new topic owned by the given user.
+ *
+ * The `userId` is supplied by the caller (the controller extracts
+ * it from `req.user.userId`), never by the request payload. That
+ * is what makes it impossible for a client to create a topic on
+ * behalf of another user: the ownership field is set from the
+ * authenticated session, not from anything the client controls.
+ *
+ * Defaults for optional fields (preset, profile, promptFile,
+ * wordCount, sourceCount, status) are applied by the schema, not
+ * here. Passing an explicit `undefined` would violate
+ * `exactOptionalPropertyTypes`, so the function conditionally
+ * spreads only the fields the caller actually provided.
+ *
+ * Throws `AppError(400)` for an empty title (the schema's
+ * `minlength: 3` also catches this, but doing it here produces a
+ * clearer message than the Mongoose ValidationError's first-error
+ * extraction). Any other validation failure — a bad preset, a
+ * non-integer wordCount — propagates from the schema as a
+ * Mongoose ValidationError, which the terminal middleware maps
+ * to a 400.
+ */
+export const createTopic = async (
+  userId: MongoId,
+  payload: TopicCreatePayload
+): Promise<TopicDocument> => {
+  const trimmedTitle = payload.title.trim();
+  if (trimmedTitle.length < 3) {
+    throw new AppError(
+      'Title must be at least 3 characters.',
+      400
+    );
+  }
+
+  const doc = new TopicModel({
+    userId,
+    title: trimmedTitle,
+    ...(payload.keywords !== undefined
+      ? { keywords: payload.keywords }
+      : {}),
+    ...(payload.preset !== undefined ? { preset: payload.preset } : {}),
+    ...(payload.profile !== undefined ? { profile: payload.profile } : {}),
+    ...(payload.promptFile !== undefined
+      ? { promptFile: payload.promptFile.trim() }
+      : {}),
+    ...(payload.wordCount !== undefined
+      ? { wordCount: payload.wordCount }
+      : {}),
+    ...(payload.sourceCount !== undefined
+      ? { sourceCount: payload.sourceCount }
+      : {}),
+  });
+
+  return await doc.save();
+};
+
+// ============================================================
+//  listTopics
+// ============================================================
+
+/**
+ * List every topic owned by the given user, sorted newest first.
+ *
+ * The optional `statusFilter` narrows the result to a single
+ * pipeline state. It is a separate argument rather than a field on
+ * a filter object because the service currently supports exactly
+ * one filter dimension; a future addition (e.g. preset filter)
+ * would arrive as a second argument, at which point the signature
+ * changes to accept a filter object. Until then, the flat form is
+ * the honest one.
+ *
+ * The sort is `createdAt: -1` — newest first, matching the
+ * default view the Topics page renders. The index
+ * `{ userId: 1, createdAt: -1 }` on the schema serves this query
+ * without an in-memory sort stage.
+ */
+export const listTopics = async (
+  userId: MongoId,
+  statusFilter?: TopicStatus
+): Promise<TopicDocument[]> => {
+  const filter: { userId: MongoId; status?: TopicStatus } = { userId };
+  if (statusFilter !== undefined) {
+    filter.status = statusFilter;
+  }
+
+  return await TopicModel.find(filter).sort({ createdAt: -1 });
+};
+
+// ============================================================
+//  getTopicById
+// ============================================================
+
+/**
+ * Read a single topic by ID, scoped to the requesting user.
+ *
+ * Returns `null` when no topic with that ID exists OR when the
+ * topic exists but belongs to a different user. The two cases are
+ * deliberately indistinguishable from this function's return
+ * value. A caller (the controller) converts the null into a 404,
+ * never a 403, so an authenticated user cannot enumerate other
+ * users' topic IDs by probing the endpoint and watching for the
+ * status code to change.
+ *
+ * A malformed `topicId` string (not a valid ObjectId) causes
+ * Mongoose's `findOne` to throw a CastError, which the terminal
+ * middleware maps to a 400. That is the correct distinction:
+ * "the ID is not a valid identifier" is a client error, not a
+ * "topic not found" case.
+ */
+export const getTopicById = async (
+  userId: MongoId,
+  topicId: string
+): Promise<TopicDocument | null> => {
+  return await TopicModel.findOne({ _id: topicId, userId });
+};
+
+// ============================================================
+//  updateTopic
+// ============================================================
+
+/**
+ * Apply a partial update to a topic, scoped to the requesting
+ * user.
+ *
+ * Only the fields present in the patch are modified. Fields
+ * omitted from the patch are left unchanged on the document.
+ * Fields passed as `null` are not currently supported — the
+ * schema does not use `null` as a sentinel for any field, and
+ * clearing a field is achieved by omitting it or by passing an
+ * empty value of the field's type (an empty string for string
+ * fields, an empty array for the keywords list).
+ *
+ * One business rule lives here rather than in the schema: when
+ * `status` is being changed to anything other than `'failed'`,
+ * the `error` field is unset. A topic whose status is
+ * `'researching'` must not carry a stale failure message from a
+ * previous attempt — the two together would be misleading in the
+ * Topics list, and the pipeline only sets the error field
+ * immediately before setting `status: 'failed'`.
+ *
+ * The reverse is not automated: if `patch.status === 'failed'`
+ * and `patch.error` is not provided, the error field is left as
+ * it was. The schema permits a failed topic with no error string,
+ * and the pipeline may set the error in a follow-up write.
+ *
+ * Throws `AppError(404)` when the topic does not exist or is not
+ * owned by the requesting user. The two cases are merged for the
+ * same reason as in `getTopicById`.
+ */
+export const updateTopic = async (
+  userId: MongoId,
+  topicId: string,
+  patch: TopicUpdatePayload
+): Promise<TopicDocument> => {
+  // Build the $set and $unset operations separately. Fields that
+  // are being set go into $set; the `error` field being cleared
+  // goes into $unset. Mixing the two into a single $set with an
+  // empty-string value would leave a non-undefined `error` in the
+  // document, which is not the same as the field being absent and
+  // which would surface as `error: ''` in any code that checks
+  // `'error' in topic`.
+  const setFields: Record<string, unknown> = {};
+  const unsetFields: Record<string, 1> = {};
+
+  if (patch.title !== undefined) {
+    const trimmedTitle = patch.title.trim();
+    if (trimmedTitle.length < 3) {
+      throw new AppError('Title must be at least 3 characters.', 400);
+    }
+    setFields['title'] = trimmedTitle;
+  }
+
+  if (patch.keywords !== undefined) {
+    setFields['keywords'] = patch.keywords;
+  }
+
+  if (patch.preset !== undefined) {
+    setFields['preset'] = patch.preset;
+  }
+
+  if (patch.profile !== undefined) {
+    setFields['profile'] = patch.profile;
+  }
+
+  if (patch.promptFile !== undefined) {
+    setFields['promptFile'] = patch.promptFile.trim();
+  }
+
+  if (patch.wordCount !== undefined) {
+    setFields['wordCount'] = patch.wordCount;
+  }
+
+  if (patch.sourceCount !== undefined) {
+    setFields['sourceCount'] = patch.sourceCount;
+  }
+
+  if (patch.status !== undefined) {
+    setFields['status'] = patch.status;
+
+    // Status moved away from 'failed' — clear any stale error.
+    // Status moved TO 'failed' — only overwrite the error if the
+    // caller supplied one; otherwise leave the existing message
+    // in place (the schema permits a failed topic with no error
+    // string, and a caller that sets 'failed' without an error
+    // may set it in a follow-up write).
+    if (patch.status !== 'failed') {
+      unsetFields['error'] = 1;
+    } else if (patch.error !== undefined) {
+      setFields['error'] = patch.error;
+    }
+  } else if (patch.error !== undefined) {
+    // Status is not being changed, but the caller is supplying an
+    // error. This is a legitimate write — a caller that wants to
+    // annotate an existing failed topic with a better message.
+    setFields['error'] = patch.error;
+  }
+
+  // If the patch contains no actionable fields, return the
+  // current document unchanged. This is more honest than issuing
+  // an empty $set and returning whatever Mongoose decides.
+  if (
+    Object.keys(setFields).length === 0 &&
+    Object.keys(unsetFields).length === 0
+  ) {
+    const existing = await TopicModel.findOne({ _id: topicId, userId });
+    if (!existing) {
+      throw new AppError('Topic not found.', 404);
+    }
+    return existing;
+  }
+
+  const updateOps: Record<string, Record<string, unknown>> = {};
+  if (Object.keys(setFields).length > 0) {
+    updateOps['$set'] = setFields;
+  }
+  if (Object.keys(unsetFields).length > 0) {
+    updateOps['$unset'] = unsetFields;
+  }
+
+  const updated = await TopicModel.findOneAndUpdate(
+    { _id: topicId, userId },
+    updateOps,
+    { new: true, runValidators: true }
+  );
+
+  if (!updated) {
+    throw new AppError('Topic not found.', 404);
+  }
+
+  return updated;
+};
+
+// ============================================================
+//  deleteTopic
+// ============================================================
+
+/**
+ * Delete a topic, scoped to the requesting user.
+ *
+ * Returns the deleted document so the caller can cascade the
+ * deletion (removing the topic's Documents, Articles, and Reports
+ * if the pipeline stages that own them decide to do so). The
+ * service does NOT cascade the delete itself — that is a decision
+ * for each owning feature, and keeping it out of this function
+ * means a future change to the cascade rules does not require
+ * touching the topic service.
+ *
+ * Throws `AppError(404)` when the topic does not exist or is not
+ * owned by the requesting user. Same merge as the other
+ * ownership-scoped operations.
+ */
+export const deleteTopic = async (
+  userId: MongoId,
+  topicId: string
+): Promise<TopicDocument> => {
+  const deleted = await TopicModel.findOneAndDelete({
+    _id: topicId,
+    userId,
+  });
+
+  if (!deleted) {
+    throw new AppError('Topic not found.', 404);
+  }
+
+  return deleted;
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default {
+  createTopic,
+  listTopics,
+  getTopicById,
+  updateTopic,
+  deleteTopic,
+};
 </file>
 
 <file path="apps/server/src/features/topics/index.ts">
@@ -4406,15 +5552,492 @@ export interface Env {
 </file>
 
 <file path="apps/server/src/app.ts">
+/**
+ * Express application factory for the WriteSpeare backend.
+ *
+ * Creates and configures the Express instance that serves every
+ * HTTP request. The factory pattern (rather than a module-level
+ * singleton alone) exists so that tests can build a fresh app with
+ * different middleware configuration without tearing down a shared
+ * instance, and so the serverless entry point and the local
+ * development entry point can each own their own app if they ever
+ * need to.
+ *
+ * Middleware order matters and is not alphabetical:
+ *
+ *   1. helmet          — sets security headers on every response.
+ *                        Runs first so even an error response
+ *                        carries them.
+ *   2. cors            — governs cross-origin access. In
+ *                        development, the request origin is
+ *                        reflected (any origin allowed); in
+ *                        production, CORS is disabled entirely
+ *                        because the only client is the desktop
+ *                        app's main process, which is Node — no
+ *                        browser origin is enforced there anyway.
+ *   3. body parsers    — JSON and URL-encoded. Registered before
+ *                        any route so a controller never has to
+ *                        think about raw request bodies.
+ *   4. morgan          — HTTP request logging, development only.
+ *                        Suppressed in production because the
+ *                        hosting platform's own log drain already
+ *                        captures request metadata, and duplicating
+ *                        it wastes the function's stdout budget.
+ *   5. routes          — /health, then the API routers.
+ *   6. 404 handler     — runs when no route matched. Registered
+ *                        after every real route so it only fires on
+ *                        unmatched paths.
+ *   7. error handler   — four-parameter function Express recognises
+ *                        as the terminal error handler. Must be
+ *                        registered last or it never fires.
+ *
+ * Route mounting is deliberately incremental. The plan builds the
+ * backend in numbered sessions — Session 1 is auth only; Session 2
+ * adds topics, documents, articles, reports, settings, and version;
+ * Session 3 adds users and admin. Mounting a router whose module
+ * has no default export yet would throw at startup, so this file
+ * mounts exactly the routers that exist and grows by one
+ * `app.use(...)` line per session.
+ *
+ * Env vars are loaded here via `import 'dotenv/config'` as a
+ * defensive side effect. The real entry points (src/index.ts and
+ * handler/index.ts) also load dotenv, and because ESM evaluates
+ * imports in declaration order the side effect runs before any
+ * code in this file. The duplicate import is idempotent and means
+ * this module is safe to import from a test harness or a script
+ * that forgot to load dotenv itself.
+ */
 
+import 'dotenv/config';
+
+import express, { type Express, type Request, type Response } from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+
+import authRoutes from './features/auth/routes/authRoutes.js';
+import {
+  errorHandler,
+  notFoundHandler,
+} from './features/shared/middleware/errorHandler.js';
+
+// ============================================================
+//  Constants
+// ============================================================
+
+/**
+ * Maximum request body size accepted by the JSON and URL-encoded
+ * parsers.
+ *
+ * The largest payload this API accepts is an article body or a
+ * document's content field — both in the tens of kilobytes in the
+ * common case. One megabyte is a generous ceiling that still
+ * prevents a malicious client from streaming gigabytes into a
+ * single request and exhausting the process's memory.
+ */
+const REQUEST_BODY_LIMIT = '1mb';
+
+// ============================================================
+//  App factory
+// ============================================================
+
+/**
+ * Build and return a fully configured Express application.
+ *
+ * Does not start an HTTP listener. That is the caller's job — see
+ * `src/index.ts` for the local development entry point and
+ * `handler/index.ts` for the serverless one.
+ */
+export const createApp = (): Express => {
+  const app = express();
+
+  // ---- 1. Security headers ----
+  // helmet sets a baseline of HTTP response headers (CSP,
+  // X-Content-Type-Options, HSTS, and others) on every response.
+  // Applied before any route so even an error response carries
+  // them — a 500 is still a response, and a browser rendering the
+  // error body benefits from the same protections a success body
+  // would.
+  app.use(helmet());
+
+  // ---- 2. Cross-origin resource sharing ----
+  // In development, reflect the request origin so a browser-based
+  // test client can hit the API without CORS friction. In
+  // production, CORS is disabled entirely because the only caller
+  // is the desktop app's main process, which runs in Node and does
+  // not enforce CORS. `credentials` is false in both cases: this
+  // API authenticates with bearer tokens in the Authorization
+  // header, not with cookies, so the browser's credential-handling
+  // rules never apply.
+  app.use(
+    cors({
+      origin: process.env['NODE_ENV'] === 'production' ? false : true,
+      credentials: false,
+    })
+  );
+
+  // ---- 3. Body parsers ----
+  // JSON is the wire format for every request body in this API.
+  // The URL-encoded parser is included because some HTTP clients
+  // (and every HTML form) default to that encoding, and it costs
+  // nothing to support. Both are bounded at REQUEST_BODY_LIMIT.
+  app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
+  app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
+
+  // ---- 4. Request logging (development only) ----
+  // The 'dev' format is compact and colour-coded, which is what a
+  // developer wants while iterating. Production logging is handled
+  // by the hosting platform's log drain, so emitting our own would
+  // double the stdout volume without adding signal.
+  if (process.env['NODE_ENV'] === 'development') {
+    app.use(morgan('dev'));
+  }
+
+  // ---- 5a. Health check ----
+  // A trivial, unauthenticated endpoint that a load balancer, a
+  // health monitor, or a curious developer can hit to confirm the
+  // process is alive and serving requests. It deliberately does
+  // NOT check the database: a database health check here would
+  // turn a transient DB blip into a health-check failure, which on
+  // many platforms triggers a process restart — the opposite of
+  // what a transient blip needs.
+  app.get('/health', (_req: Request, res: Response) => {
+    res.status(200).json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // ---- 5b. API routes ----
+  // Auth is the only feature whose router exists at this point in
+  // the build. Later sessions add the remaining mounts:
+  // users, topics, documents, articles, reports, settings, version,
+  // and admin. Each is a one-line addition in its session; none of
+  // them can be mounted now because their route modules have no
+  // default export yet, and importing one would throw at startup.
+  app.use('/api/auth', authRoutes);
+
+  // ---- 6. 404 handler ----
+  // Runs when no route above matched. Registered after every real
+  // route so it only fires on unmatched paths.
+  app.use(notFoundHandler);
+
+  // ---- 7. Error handler ----
+  // The four-parameter signature is what Express uses to identify
+  // this as the terminal error handler. Must be registered last or
+  // it never fires.
+  app.use(errorHandler);
+
+  return app;
+};
+
+// ============================================================
+//  Singleton instance
+// ============================================================
+
+/**
+ * The app instance used by both entry points.
+ *
+ * Built once at module load. `src/index.ts` imports it to start
+ * the local HTTP listener; `handler/index.ts` imports it as the
+ * Vercel serverless handler. Tests that need a fresh app should
+ * call `createApp()` directly rather than importing this singleton
+ * — the factory exists precisely so they can.
+ */
+const app = createApp();
+
+export default app;
 </file>
 
 <file path="apps/server/src/index.ts">
+/**
+ * Local development and long-running-server entry point for the
+ * WriteSpeare backend.
+ *
+ * Responsibilities, in the order they execute:
+ *
+ *   1. Load environment variables via the `dotenv/config` side
+ *      effect. This runs first because everything below reads from
+ *      `process.env`.
+ *
+ *   2. Connect to MongoDB. If the connection cannot be
+ *      established, the process exits with a non-zero code rather
+ *      than serving requests against an unavailable database. A
+ *      listener that accepts traffic but fails every query is
+ *      worse than no listener at all — it turns a clear startup
+ *      failure into a confusing runtime one.
+ *
+ *   3. Start the HTTP listener on the resolved port. The Express
+ *      app itself is imported from `./app.js`, where all
+ *      middleware and routes are configured. This file does not
+ *      know what routes exist — its only job is to give them a
+ *      socket to listen on.
+ *
+ *   4. Register the process-level signal handlers (SIGINT,
+ *      SIGTERM) and the fatal-error handlers (uncaughtException,
+ *      unhandledRejection). Both categories route through the
+ *      same shutdown routine so the database connection is closed
+ *      cleanly in every exit path.
+ *
+ * Why this file is not used on Vercel:
+ *
+ *   Vercel invokes a single exported handler function per
+ *   request; it never starts a long-running HTTP listener. The
+ *   serverless entry point lives in `handler/index.ts`, which
+ *   imports the same Express app and hands it each incoming
+ *   request. Both entry points share the app instance via the
+ *   module cache, so the middleware configuration and route table
+ *   are identical regardless of which one is serving.
+ *
+ * Why the `PORT` resolution is a function and not a constant:
+ *
+ *   The environment variable arrives as a string, may be absent,
+ *   may be an empty string, or may contain garbage. The
+ *   `noUncheckedIndexedAccess` compiler flag means
+ *   `process.env['PORT']` is typed as `string | undefined`, so the
+ *   resolution has to be explicit at every read. Wrapping it in a
+ *   function that returns a validated `number` (or the default)
+ *   keeps the rest of the file free of ad-hoc parsing.
+ *
+ * Why there is no top-level `await`:
+ *
+ *   The `startServer` function is exported and the call to it at
+ *   the bottom of the file is deliberately un-awaited. Awaiting it
+ *   at module scope would require the file to be an async module,
+ *   which changes how the module cache behaves under some Node
+ *   versions and interacts badly with the singleton pattern used
+ *   by `app.ts`. The un-awaited call is fine: `startServer` handles
+ *   every failure internally and only throws if `process.exit`
+ *   itself fails, which is not a recoverable condition.
+ */
 
-</file>
+import 'dotenv/config';
 
-<file path="apps/server/.env.example">
+import type { Server } from 'node:http';
 
+import app from './app.js';
+import { connectDB, disconnectDB } from './features/shared/config/db.js';
+
+// ============================================================
+//  Configuration
+// ============================================================
+
+/**
+ * Port the listener falls back to when the environment does not
+ * provide a valid one. Five thousand is a widely used default for
+ * local Node development, and it does not collide with the ports
+ * the desktop app's embedded Chrome instances occupy (those start
+ * at 9222 and climb from there).
+ */
+const DEFAULT_PORT = 5000;
+
+/**
+ * The environment name, defaulting to `'development'`.
+ *
+ * Read once here and referenced from every log line and branch
+ * below. Using a single constant means the environment cannot be
+ * logged differently from the way it is checked — a class of bug
+ * that would only show up when someone wonders why production logs
+ * say "development" or vice versa.
+ */
+const NODE_ENV = process.env['NODE_ENV'] ?? 'development';
+
+/**
+ * Resolve the listener port from the environment.
+ *
+ * Order of preference:
+ *
+ *   1. `process.env['PORT']` if it parses to a valid TCP port.
+ *   2. `DEFAULT_PORT` if the variable is absent, empty, whitespace-
+ *      only, non-numeric, negative, zero, or above 65535.
+ *
+ * The validation is deliberately strict rather than permissive. A
+ * typo in `.env` that produced `PORT=50O0` (letter O) would parse
+ * as `50` under a lenient `parseInt` call, silently binding the
+ * server to a port nobody expects. Failing over to the default is
+ * louder than that: the startup log line will show the port the
+ * server actually bound to, and the discrepancy between that and
+ * what the developer typed is visible at a glance.
+ *
+ * Only the `PORT` variable is read here. The database URI and the
+ * JWT secret are validated by their own modules (`db.ts` and
+ * `jwt.ts` respectively) — each module owns the validation for the
+ * variables it consumes, so a missing secret fails at the JWT
+ * module's load time with a message that names the variable.
+ */
+const resolvePort = (): number => {
+  const raw = process.env['PORT'];
+  if (typeof raw !== 'string') return DEFAULT_PORT;
+
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return DEFAULT_PORT;
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_PORT;
+  if (parsed <= 0 || parsed > 65535) return DEFAULT_PORT;
+
+  return parsed;
+};
+
+// ============================================================
+//  Graceful shutdown
+// ============================================================
+
+/**
+ * Close the database connection and exit the process.
+ *
+ * Called from every terminal signal handler below. Swallows the
+ * disconnect error on the way out — at this point the process is
+ * terminating regardless, and there is no useful recovery from a
+ * failed close. Logging the error and exiting with a non-zero
+ * code would be a stronger signal, but that would also cause a
+ * monitoring platform to distinguish "clean shutdown" from
+ * "shutdown after a close error" for what is, from the outside,
+ * the same event: the process is going down.
+ *
+ * The `signal` argument is included in the log so an operator
+ * reading the console can tell whether the shutdown was user-
+ * initiated (SIGINT from Ctrl+C), service-manager-initiated
+ * (SIGTERM from a supervisor), or a crash (uncaughtException /
+ * unhandledRejection).
+ */
+const gracefulShutdown = async (signal: string): Promise<void> => {
+  console.log(`Received ${signal}. Shutting down...`);
+  try {
+    await disconnectDB();
+    console.log('Database connection closed.');
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+};
+
+// ============================================================
+//  Server bootstrap
+// ============================================================
+
+/**
+ * Connect the database, start the listener, and install the
+ * process-level handlers.
+ *
+ * Ordering rationale:
+ *
+ *   The database connection is awaited before the listener starts.
+ *   A listener that accepts traffic before the database is ready
+ *   would return 500s for the brief window between `app.listen()`
+ *   returning and the first successful query — and a health check
+ *   that happens to hit during that window would restart the
+ *   process on a platform that treats a failing health check as a
+ *   signal to recycle. Serializing the two eliminates the window.
+ *
+ *   The signal handlers are registered after the listener starts.
+ *   Before that point there is no connection to close gracefully
+ *   and no reason to intercept signals — the default behaviour of
+ *   terminating the process is already the correct response to a
+ *   SIGINT that arrives during startup.
+ *
+ * Returns the `http.Server` instance the caller can use to close
+ * the listener from a test or from a future admin endpoint. The
+ * return type is `Promise<Server>` rather than `Promise<void>`
+ * because the caller may legitimately want to await shutdown, and
+ * exposing the server handle costs nothing while making that
+ * possible.
+ *
+ * Throws only if `connectDB` throws. That throw is not caught here
+ * — it propagates to the caller at the bottom of the file, where
+ * it is logged and converted into a `process.exit(1)`. Every other
+ * failure inside the function is handled locally so the caller
+ * only has to reason about one throw path.
+ */
+export const startServer = async (): Promise<Server> => {
+  // ---- 1. Connect to the database ----
+  // The `connectDB` function is idempotent, so a test that boots
+  // the app more than once in the same process reuses the
+  // existing connection rather than opening a second one.
+  await connectDB();
+  console.log('Database connected.');
+
+  // ---- 2. Start the HTTP listener ----
+  // `app.listen` returns the `http.Server` instance. The callback
+  // runs once the listener is bound; the log lines inside it are
+  // the first indication that the server is ready to accept
+  // traffic.
+  const server = app.listen(resolvePort(), () => {
+    console.log(
+      `Server listening on http://localhost:${resolvePort()}`
+    );
+    console.log(`API base:    http://localhost:${resolvePort()}/api`);
+    console.log(`Health:      http://localhost:${resolvePort()}/health`);
+    console.log(`Environment: ${NODE_ENV}`);
+    console.log('Press Ctrl+C to stop.');
+  });
+
+  // ---- 3. Register the shutdown handlers ----
+  // SIGINT: the user pressed Ctrl+C in the terminal. SIGTERM: a
+  // service manager or process supervisor asked the process to
+  // stop. Both route through `gracefulShutdown` so the database
+  // connection is closed cleanly regardless of who initiated the
+  // shutdown.
+  process.on('SIGINT', () => {
+    void gracefulShutdown('SIGINT');
+  });
+
+  process.on('SIGTERM', () => {
+    void gracefulShutdown('SIGTERM');
+  });
+
+  // ---- 4. Register the fatal-error handlers ----
+  // An uncaught exception or an unhandled promise rejection means
+  // the process is in an undefined state. Node's default behaviour
+  // is to print the error and exit with a non-zero code; the only
+  // thing this handler adds is a clean database disconnect before
+  // that exit, so a monitoring platform does not see a dangling
+  // TCP socket that it has to reap.
+  process.on('uncaughtException', (error: Error) => {
+    console.error('Uncaught exception:', error);
+    void gracefulShutdown('uncaughtException');
+  });
+
+  process.on('unhandledRejection', (reason: unknown) => {
+    console.error('Unhandled rejection:', reason);
+    void gracefulShutdown('unhandledRejection');
+  });
+
+  return server;
+};
+
+// ============================================================
+//  Bootstrap
+// ============================================================
+
+/**
+ * Boot the server immediately when this module is imported.
+ *
+ * The call is un-awaited because `startServer` handles every
+ * internal failure except `process.exit` itself. The `.catch` is
+ * a defensive net against an unexpected synchronous throw from
+ * `resolvePort` (which is total, so it cannot throw) or from
+ * `app.listen` (which only throws if the port is invalid, but
+ * `resolvePort` guarantees a valid port). If the catch ever runs,
+ * the input is a bug worth surfacing, not a state worth
+ * recovering from.
+ *
+ * The log line inside the catch names the file so the failure is
+ * traceable without a stack dive.
+ */
+void startServer().catch((error: unknown) => {
+  console.error('Failed to start server:', error);
+  process.exit(1);
+});
+
+// ============================================================
+//  Default export
+// ============================================================
+
+export default {
+  startServer,
+};
 </file>
 
 <file path="apps/server/.gitignore">
@@ -4813,7 +6436,21 @@ vite.config.d.ts
 </file>
 
 <file path="apps/server/vercel.json">
-
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "handler/index.ts",
+      "use": "@vercel/node"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/handler/index.ts"
+    }
+  ]
+}
 </file>
 
 <file path=".env.example">
@@ -5091,460 +6728,6 @@ vite.config.d.ts
 *.d.ts
 
 *.md
-</file>
-
-<file path="create-structure.bat">
-@echo off
-setlocal EnableDelayedExpansion
-cd /d "%~dp0"
-
-echo ============================================================
-echo  WriteSpeare - Project Structure Creator
-echo  Working directory: %CD%
-echo ============================================================
-echo.
-
-REM ============================================================
-REM  ROOT
-REM ============================================================
-echo [ROOT] Creating workspace files...
-type nul > "package.json"
-type nul > ".gitignore"
-type nul > ".gitattributes"
-type nul > "repomix.config.json"
-type nul > "README.md"
-type nul > ".env.example"
-
-REM ============================================================
-REM  BACKEND - apps/server - FOLDERS
-REM ============================================================
-echo [SERVER] Creating folders...
-
-mkdir "apps\server\handler" 2>nul
-mkdir "apps\server\src\features\shared\config" 2>nul
-mkdir "apps\server\src\features\shared\middleware" 2>nul
-mkdir "apps\server\src\features\shared\types" 2>nul
-mkdir "apps\server\src\features\shared\utils" 2>nul
-mkdir "apps\server\src\features\auth\controllers" 2>nul
-mkdir "apps\server\src\features\auth\middleware" 2>nul
-mkdir "apps\server\src\features\auth\models" 2>nul
-mkdir "apps\server\src\features\auth\routes" 2>nul
-mkdir "apps\server\src\features\auth\services" 2>nul
-mkdir "apps\server\src\features\auth\utils" 2>nul
-mkdir "apps\server\src\features\admin\controllers" 2>nul
-mkdir "apps\server\src\features\admin\middleware" 2>nul
-mkdir "apps\server\src\features\admin\routes" 2>nul
-mkdir "apps\server\src\features\admin\services" 2>nul
-mkdir "apps\server\src\features\users\controllers" 2>nul
-mkdir "apps\server\src\features\users\routes" 2>nul
-mkdir "apps\server\src\features\users\services" 2>nul
-mkdir "apps\server\src\features\topics\controllers" 2>nul
-mkdir "apps\server\src\features\topics\models" 2>nul
-mkdir "apps\server\src\features\topics\routes" 2>nul
-mkdir "apps\server\src\features\topics\services" 2>nul
-mkdir "apps\server\src\features\documents\controllers" 2>nul
-mkdir "apps\server\src\features\documents\models" 2>nul
-mkdir "apps\server\src\features\documents\routes" 2>nul
-mkdir "apps\server\src\features\documents\services" 2>nul
-mkdir "apps\server\src\features\articles\controllers" 2>nul
-mkdir "apps\server\src\features\articles\models" 2>nul
-mkdir "apps\server\src\features\articles\routes" 2>nul
-mkdir "apps\server\src\features\articles\services" 2>nul
-mkdir "apps\server\src\features\reports\controllers" 2>nul
-mkdir "apps\server\src\features\reports\models" 2>nul
-mkdir "apps\server\src\features\reports\routes" 2>nul
-mkdir "apps\server\src\features\reports\services" 2>nul
-mkdir "apps\server\src\features\settings\controllers" 2>nul
-mkdir "apps\server\src\features\settings\models" 2>nul
-mkdir "apps\server\src\features\settings\routes" 2>nul
-mkdir "apps\server\src\features\settings\services" 2>nul
-mkdir "apps\server\src\features\version\controllers" 2>nul
-mkdir "apps\server\src\features\version\models" 2>nul
-mkdir "apps\server\src\features\version\routes" 2>nul
-
-REM ============================================================
-REM  BACKEND - apps/server - FILES
-REM ============================================================
-echo [SERVER] Creating files...
-
-type nul > "apps\server\package.json"
-type nul > "apps\server\tsconfig.json"
-type nul > "apps\server\vercel.json"
-type nul > "apps\server\.gitignore"
-type nul > "apps\server\.env"
-type nul > "apps\server\.env.example"
-type nul > "apps\server\handler\index.ts"
-type nul > "apps\server\src\app.ts"
-type nul > "apps\server\src\index.ts"
-type nul > "apps\server\src\features\shared\config\db.ts"
-type nul > "apps\server\src\features\shared\middleware\errorHandler.ts"
-type nul > "apps\server\src\features\shared\middleware\validate.ts"
-type nul > "apps\server\src\features\shared\middleware\rateLimit.ts"
-type nul > "apps\server\src\features\shared\types\index.ts"
-type nul > "apps\server\src\features\shared\utils\bcrypt.ts"
-type nul > "apps\server\src\features\shared\utils\seedAdmin.ts"
-type nul > "apps\server\src\features\auth\controllers\authController.ts"
-type nul > "apps\server\src\features\auth\middleware\authGuard.ts"
-type nul > "apps\server\src\features\auth\models\User.ts"
-type nul > "apps\server\src\features\auth\routes\authRoutes.ts"
-type nul > "apps\server\src\features\auth\services\authService.ts"
-type nul > "apps\server\src\features\auth\utils\bcrypt.ts"
-type nul > "apps\server\src\features\auth\utils\jwt.ts"
-type nul > "apps\server\src\features\auth\index.ts"
-type nul > "apps\server\src\features\admin\controllers\adminController.ts"
-type nul > "apps\server\src\features\admin\middleware\adminGuard.ts"
-type nul > "apps\server\src\features\admin\routes\adminRoutes.ts"
-type nul > "apps\server\src\features\admin\services\adminService.ts"
-type nul > "apps\server\src\features\admin\index.ts"
-type nul > "apps\server\src\features\users\controllers\userController.ts"
-type nul > "apps\server\src\features\users\routes\userRoutes.ts"
-type nul > "apps\server\src\features\users\services\userService.ts"
-type nul > "apps\server\src\features\users\index.ts"
-type nul > "apps\server\src\features\topics\controllers\topicController.ts"
-type nul > "apps\server\src\features\topics\models\Topic.ts"
-type nul > "apps\server\src\features\topics\routes\topicRoutes.ts"
-type nul > "apps\server\src\features\topics\services\topicService.ts"
-type nul > "apps\server\src\features\topics\index.ts"
-type nul > "apps\server\src\features\documents\controllers\documentController.ts"
-type nul > "apps\server\src\features\documents\models\Document.ts"
-type nul > "apps\server\src\features\documents\routes\documentRoutes.ts"
-type nul > "apps\server\src\features\documents\services\documentService.ts"
-type nul > "apps\server\src\features\documents\index.ts"
-type nul > "apps\server\src\features\articles\controllers\articleController.ts"
-type nul > "apps\server\src\features\articles\models\Article.ts"
-type nul > "apps\server\src\features\articles\routes\articleRoutes.ts"
-type nul > "apps\server\src\features\articles\services\articleService.ts"
-type nul > "apps\server\src\features\articles\index.ts"
-type nul > "apps\server\src\features\reports\controllers\reportController.ts"
-type nul > "apps\server\src\features\reports\models\Report.ts"
-type nul > "apps\server\src\features\reports\routes\reportRoutes.ts"
-type nul > "apps\server\src\features\reports\services\reportService.ts"
-type nul > "apps\server\src\features\reports\index.ts"
-type nul > "apps\server\src\features\settings\controllers\settingsController.ts"
-type nul > "apps\server\src\features\settings\models\UserSetting.ts"
-type nul > "apps\server\src\features\settings\models\Preset.ts"
-type nul > "apps\server\src\features\settings\routes\settingsRoutes.ts"
-type nul > "apps\server\src\features\settings\services\settingsService.ts"
-type nul > "apps\server\src\features\settings\index.ts"
-type nul > "apps\server\src\features\version\controllers\versionController.ts"
-type nul > "apps\server\src\features\version\models\AppVersion.ts"
-type nul > "apps\server\src\features\version\routes\versionRoutes.ts"
-type nul > "apps\server\src\features\version\index.ts"
-
-REM ============================================================
-REM  DESKTOP - apps/desktop - FOLDERS
-REM ============================================================
-echo [DESKTOP] Creating folders...
-
-mkdir "apps\desktop\scripts" 2>nul
-mkdir "apps\desktop\src\main" 2>nul
-mkdir "apps\desktop\src\renderer" 2>nul
-mkdir "apps\desktop\src\renderer\styles" 2>nul
-
-mkdir "apps\desktop\src\features\shared\api" 2>nul
-mkdir "apps\desktop\src\features\shared\components" 2>nul
-mkdir "apps\desktop\src\features\shared\constants" 2>nul
-mkdir "apps\desktop\src\features\shared\hooks" 2>nul
-mkdir "apps\desktop\src\features\shared\store" 2>nul
-mkdir "apps\desktop\src\features\shared\types" 2>nul
-mkdir "apps\desktop\src\features\shared\utils" 2>nul
-
-mkdir "apps\desktop\src\features\auth\api" 2>nul
-mkdir "apps\desktop\src\features\auth\hooks" 2>nul
-mkdir "apps\desktop\src\features\auth\ipc" 2>nul
-mkdir "apps\desktop\src\features\auth\pages" 2>nul
-mkdir "apps\desktop\src\features\auth\store" 2>nul
-mkdir "apps\desktop\src\features\auth\types" 2>nul
-
-mkdir "apps\desktop\src\features\topics\components" 2>nul
-mkdir "apps\desktop\src\features\topics\hooks" 2>nul
-mkdir "apps\desktop\src\features\topics\ipc" 2>nul
-mkdir "apps\desktop\src\features\topics\pages" 2>nul
-mkdir "apps\desktop\src\features\topics\services" 2>nul
-mkdir "apps\desktop\src\features\topics\store" 2>nul
-
-mkdir "apps\desktop\src\features\research\components" 2>nul
-mkdir "apps\desktop\src\features\research\hooks" 2>nul
-mkdir "apps\desktop\src\features\research\ipc" 2>nul
-mkdir "apps\desktop\src\features\research\services" 2>nul
-mkdir "apps\desktop\src\features\research\store" 2>nul
-
-mkdir "apps\desktop\src\features\documents\components" 2>nul
-mkdir "apps\desktop\src\features\documents\hooks" 2>nul
-mkdir "apps\desktop\src\features\documents\ipc" 2>nul
-mkdir "apps\desktop\src\features\documents\services" 2>nul
-mkdir "apps\desktop\src\features\documents\store" 2>nul
-
-mkdir "apps\desktop\src\features\writer\components" 2>nul
-mkdir "apps\desktop\src\features\writer\hooks" 2>nul
-mkdir "apps\desktop\src\features\writer\ipc" 2>nul
-mkdir "apps\desktop\src\features\writer\services" 2>nul
-mkdir "apps\desktop\src\features\writer\store" 2>nul
-
-mkdir "apps\desktop\src\features\validation\components" 2>nul
-mkdir "apps\desktop\src\features\validation\hooks" 2>nul
-mkdir "apps\desktop\src\features\validation\ipc" 2>nul
-mkdir "apps\desktop\src\features\validation\services" 2>nul
-mkdir "apps\desktop\src\features\validation\store" 2>nul
-
-mkdir "apps\desktop\src\features\export\components" 2>nul
-mkdir "apps\desktop\src\features\export\hooks" 2>nul
-mkdir "apps\desktop\src\features\export\ipc" 2>nul
-mkdir "apps\desktop\src\features\export\services" 2>nul
-
-mkdir "apps\desktop\src\features\settings\hooks" 2>nul
-mkdir "apps\desktop\src\features\settings\ipc" 2>nul
-mkdir "apps\desktop\src\features\settings\pages" 2>nul
-mkdir "apps\desktop\src\features\settings\services" 2>nul
-mkdir "apps\desktop\src\features\settings\store" 2>nul
-
-mkdir "apps\desktop\src\features\admin\components" 2>nul
-mkdir "apps\desktop\src\features\admin\hooks" 2>nul
-mkdir "apps\desktop\src\features\admin\ipc" 2>nul
-mkdir "apps\desktop\src\features\admin\pages" 2>nul
-mkdir "apps\desktop\src\features\admin\store" 2>nul
-
-mkdir "apps\desktop\src\features\automation\components" 2>nul
-mkdir "apps\desktop\src\features\automation\hooks" 2>nul
-mkdir "apps\desktop\src\features\automation\ipc" 2>nul
-mkdir "apps\desktop\src\features\automation\store" 2>nul
-
-mkdir "apps\desktop\src\resources\config" 2>nul
-mkdir "apps\desktop\src\resources\images" 2>nul
-mkdir "apps\desktop\src\resources\python" 2>nul
-mkdir "apps\desktop\src\resources\scripts\core" 2>nul
-mkdir "apps\desktop\src\resources\scripts\research" 2>nul
-mkdir "apps\desktop\src\resources\scripts\writer" 2>nul
-mkdir "apps\desktop\src\resources\scripts\validation" 2>nul
-mkdir "apps\desktop\src\resources\scripts\export" 2>nul
-mkdir "apps\desktop\src\resources\scripts\prompts" 2>nul
-mkdir "apps\desktop\src\resources\scripts\migrations" 2>nul
-
-REM ============================================================
-REM  DESKTOP - apps/desktop - ROOT FILES
-REM ============================================================
-echo [DESKTOP] Creating root files...
-
-type nul > "apps\desktop\package.json"
-type nul > "apps\desktop\tsconfig.json"
-type nul > "apps\desktop\vite.config.ts"
-type nul > "apps\desktop\tailwind.config.js"
-type nul > "apps\desktop\postcss.config.js"
-type nul > "apps\desktop\index.html"
-type nul > "apps\desktop\.gitattributes"
-type nul > "apps\desktop\.gitignore"
-type nul > "apps\desktop\scripts\optimize-images.mjs"
-
-REM ============================================================
-REM  DESKTOP - src/main
-REM ============================================================
-type nul > "apps\desktop\src\main\index.ts"
-type nul > "apps\desktop\src\main\preload.ts"
-type nul > "apps\desktop\src\main\protocols.ts"
-type nul > "apps\desktop\src\main\store.ts"
-
-REM ============================================================
-REM  DESKTOP - src/renderer
-REM ============================================================
-type nul > "apps\desktop\src\renderer\index.tsx"
-type nul > "apps\desktop\src\renderer\App.tsx"
-type nul > "apps\desktop\src\renderer\styles\tailwind.css"
-
-REM ============================================================
-REM  DESKTOP - shared feature
-REM ============================================================
-type nul > "apps\desktop\src\features\shared\api\client.ts"
-type nul > "apps\desktop\src\features\shared\components\Layout.tsx"
-type nul > "apps\desktop\src\features\shared\components\Modal.tsx"
-type nul > "apps\desktop\src\features\shared\components\Sidebar.tsx"
-type nul > "apps\desktop\src\features\shared\components\Toast.tsx"
-type nul > "apps\desktop\src\features\shared\constants\index.ts"
-type nul > "apps\desktop\src\features\shared\hooks\useToast.ts"
-type nul > "apps\desktop\src\features\shared\store\rootStore.ts"
-type nul > "apps\desktop\src\features\shared\types\index.ts"
-type nul > "apps\desktop\src\features\shared\utils\encryption.ts"
-type nul > "apps\desktop\src\features\shared\utils\logger.ts"
-
-REM ============================================================
-REM  DESKTOP - auth feature
-REM ============================================================
-type nul > "apps\desktop\src\features\auth\api\authApi.ts"
-type nul > "apps\desktop\src\features\auth\hooks\useAuth.ts"
-type nul > "apps\desktop\src\features\auth\ipc\authIPC.ts"
-type nul > "apps\desktop\src\features\auth\pages\Login.tsx"
-type nul > "apps\desktop\src\features\auth\store\userStore.ts"
-type nul > "apps\desktop\src\features\auth\types\authTypes.ts"
-
-REM ============================================================
-REM  DESKTOP - topics feature
-REM ============================================================
-type nul > "apps\desktop\src\features\topics\components\TopicCard.tsx"
-type nul > "apps\desktop\src\features\topics\components\NewTopicModal.tsx"
-type nul > "apps\desktop\src\features\topics\components\AdvancedSettings.tsx"
-type nul > "apps\desktop\src\features\topics\components\PresetSelector.tsx"
-type nul > "apps\desktop\src\features\topics\hooks\useTopics.ts"
-type nul > "apps\desktop\src\features\topics\ipc\topicsIPC.ts"
-type nul > "apps\desktop\src\features\topics\pages\Topics.tsx"
-type nul > "apps\desktop\src\features\topics\pages\TopicDetail.tsx"
-type nul > "apps\desktop\src\features\topics\services\topicsApi.ts"
-type nul > "apps\desktop\src\features\topics\store\topicStore.ts"
-
-REM ============================================================
-REM  DESKTOP - research feature
-REM ============================================================
-type nul > "apps\desktop\src\features\research\components\SearchProgress.tsx"
-type nul > "apps\desktop\src\features\research\components\SourceList.tsx"
-type nul > "apps\desktop\src\features\research\components\SourceCandidate.tsx"
-type nul > "apps\desktop\src\features\research\hooks\useResearch.ts"
-type nul > "apps\desktop\src\features\research\ipc\researchIPC.ts"
-type nul > "apps\desktop\src\features\research\services\searchService.ts"
-type nul > "apps\desktop\src\features\research\services\extractionService.ts"
-type nul > "apps\desktop\src\features\research\services\childProcessManager.ts"
-type nul > "apps\desktop\src\features\research\services\chromeLauncher.ts"
-type nul > "apps\desktop\src\features\research\services\portAllocator.ts"
-type nul > "apps\desktop\src\features\research\services\listenerBridge.ts"
-type nul > "apps\desktop\src\features\research\store\researchStore.ts"
-
-REM ============================================================
-REM  DESKTOP - documents feature
-REM ============================================================
-type nul > "apps\desktop\src\features\documents\components\DocumentList.tsx"
-type nul > "apps\desktop\src\features\documents\components\DocumentPreview.tsx"
-type nul > "apps\desktop\src\features\documents\hooks\useDocuments.ts"
-type nul > "apps\desktop\src\features\documents\ipc\documentsIPC.ts"
-type nul > "apps\desktop\src\features\documents\services\documentService.ts"
-type nul > "apps\desktop\src\features\documents\store\documentStore.ts"
-
-REM ============================================================
-REM  DESKTOP - writer feature
-REM ============================================================
-type nul > "apps\desktop\src\features\writer\components\WriterProgress.tsx"
-type nul > "apps\desktop\src\features\writer\components\PromptSelector.tsx"
-type nul > "apps\desktop\src\features\writer\components\ArticlePreview.tsx"
-type nul > "apps\desktop\src\features\writer\hooks\useWriter.ts"
-type nul > "apps\desktop\src\features\writer\ipc\writerIPC.ts"
-type nul > "apps\desktop\src\features\writer\services\writerService.ts"
-type nul > "apps\desktop\src\features\writer\store\writerStore.ts"
-
-REM ============================================================
-REM  DESKTOP - validation feature
-REM ============================================================
-type nul > "apps\desktop\src\features\validation\components\ValidationReport.tsx"
-type nul > "apps\desktop\src\features\validation\components\ReadabilityPanel.tsx"
-type nul > "apps\desktop\src\features\validation\components\SeoPanel.tsx"
-type nul > "apps\desktop\src\features\validation\components\OriginalityPanel.tsx"
-type nul > "apps\desktop\src\features\validation\components\AiMarkersPanel.tsx"
-type nul > "apps\desktop\src\features\validation\components\GrammarPanel.tsx"
-type nul > "apps\desktop\src\features\validation\components\KeywordPanel.tsx"
-type nul > "apps\desktop\src\features\validation\hooks\useValidation.ts"
-type nul > "apps\desktop\src\features\validation\ipc\validationIPC.ts"
-type nul > "apps\desktop\src\features\validation\services\validationService.ts"
-type nul > "apps\desktop\src\features\validation\store\validationStore.ts"
-
-REM ============================================================
-REM  DESKTOP - export feature
-REM ============================================================
-type nul > "apps\desktop\src\features\export\components\ExportMenu.tsx"
-type nul > "apps\desktop\src\features\export\hooks\useExport.ts"
-type nul > "apps\desktop\src\features\export\ipc\exportIPC.ts"
-type nul > "apps\desktop\src\features\export\services\exportService.ts"
-
-REM ============================================================
-REM  DESKTOP - settings feature
-REM ============================================================
-type nul > "apps\desktop\src\features\settings\hooks\useSettings.ts"
-type nul > "apps\desktop\src\features\settings\ipc\settingsIPC.ts"
-type nul > "apps\desktop\src\features\settings\pages\Settings.tsx"
-type nul > "apps\desktop\src\features\settings\services\updateService.ts"
-type nul > "apps\desktop\src\features\settings\store\settingsStore.ts"
-
-REM ============================================================
-REM  DESKTOP - admin feature
-REM ============================================================
-type nul > "apps\desktop\src\features\admin\components\UserForm.tsx"
-type nul > "apps\desktop\src\features\admin\components\UserList.tsx"
-type nul > "apps\desktop\src\features\admin\hooks\useAdmin.ts"
-type nul > "apps\desktop\src\features\admin\ipc\adminIPC.ts"
-type nul > "apps\desktop\src\features\admin\pages\Admin.tsx"
-type nul > "apps\desktop\src\features\admin\store\adminStore.ts"
-
-REM ============================================================
-REM  DESKTOP - automation feature
-REM ============================================================
-type nul > "apps\desktop\src\features\automation\components\CaptchaModal.tsx"
-type nul > "apps\desktop\src\features\automation\components\RunningTaskIndicator.tsx"
-type nul > "apps\desktop\src\features\automation\hooks\useAutomation.ts"
-type nul > "apps\desktop\src\features\automation\ipc\automationIPC.ts"
-type nul > "apps\desktop\src\features\automation\store\automationStore.ts"
-
-REM ============================================================
-REM  DESKTOP - resources
-REM ============================================================
-type nul > "apps\desktop\src\resources\config\exclude_sites.csv"
-type nul > "apps\desktop\src\resources\config\paywall_domains.txt"
-type nul > "apps\desktop\src\resources\config\default_presets.json"
-type nul > "apps\desktop\src\resources\images\logo.svg"
-
-REM ============================================================
-REM  PYTHON SCRIPTS
-REM ============================================================
-echo [PYTHON] Creating Python script files...
-
-type nul > "apps\desktop\src\resources\scripts\core\__init__.py"
-type nul > "apps\desktop\src\resources\scripts\core\control_mode.py"
-type nul > "apps\desktop\src\resources\scripts\core\output.py"
-type nul > "apps\desktop\src\resources\scripts\core\browser.py"
-type nul > "apps\desktop\src\resources\scripts\core\extractor.py"
-type nul > "apps\desktop\src\resources\scripts\core\file_io.py"
-type nul > "apps\desktop\src\resources\scripts\core\utils.py"
-
-type nul > "apps\desktop\src\resources\scripts\research\__init__.py"
-type nul > "apps\desktop\src\resources\scripts\research\google_search.py"
-type nul > "apps\desktop\src\resources\scripts\research\duckduckgo_search.py"
-type nul > "apps\desktop\src\resources\scripts\research\extract_dispatch.py"
-type nul > "apps\desktop\src\resources\scripts\research\extract_generic.py"
-type nul > "apps\desktop\src\resources\scripts\research\extract_reddit.py"
-type nul > "apps\desktop\src\resources\scripts\research\extract_quora.py"
-type nul > "apps\desktop\src\resources\scripts\research\extract_medium.py"
-type nul > "apps\desktop\src\resources\scripts\research\extract_twitter.py"
-
-type nul > "apps\desktop\src\resources\scripts\writer\__init__.py"
-type nul > "apps\desktop\src\resources\scripts\writer\deepseek_writer.py"
-
-type nul > "apps\desktop\src\resources\scripts\validation\__init__.py"
-type nul > "apps\desktop\src\resources\scripts\validation\readability.py"
-type nul > "apps\desktop\src\resources\scripts\validation\seo_check.py"
-type nul > "apps\desktop\src\resources\scripts\validation\keyword_check.py"
-type nul > "apps\desktop\src\resources\scripts\validation\originality.py"
-type nul > "apps\desktop\src\resources\scripts\validation\ai_markers.py"
-type nul > "apps\desktop\src\resources\scripts\validation\grammar.py"
-type nul > "apps\desktop\src\resources\scripts\validation\validate_all.py"
-
-type nul > "apps\desktop\src\resources\scripts\export\__init__.py"
-type nul > "apps\desktop\src\resources\scripts\export\export_docx.py"
-type nul > "apps\desktop\src\resources\scripts\export\export_md.py"
-
-type nul > "apps\desktop\src\resources\scripts\prompts\default.md"
-type nul > "apps\desktop\src\resources\scripts\prompts\seo-focused.md"
-type nul > "apps\desktop\src\resources\scripts\prompts\conversational.md"
-
-type nul > "apps\desktop\src\resources\scripts\migrations\.gitkeep"
-type nul > "apps\desktop\src\resources\scripts\main.py"
-type nul > "apps\desktop\src\resources\scripts\requirements.txt"
-type nul > "apps\desktop\src\resources\scripts\README.md"
-
-echo.
-echo ============================================================
-echo  WriteSpeare structure created successfully!
-echo ============================================================
-echo.
-echo Next steps:
-echo   1. Fill in package.json files (root, server, desktop).
-echo   2. Run npm install commands.
-echo   3. Set up embedded Python runtime.
-echo   4. Begin coding (Session 1 = backend foundation).
-echo.
-pause
 </file>
 
 <file path="package.json">

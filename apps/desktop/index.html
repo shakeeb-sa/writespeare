@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!--
+      Content-Security-Policy — baseline policy for the renderer.
+
+      This meta tag is the renderer's first line of defense. It
+      applies in both development (Vite serving the file over
+      http://localhost:5173) and production (Electron loading the
+      bundled HTML over file:// or a custom protocol). The policy
+      is deliberately permissive on the two directives Vite
+      requires to function in dev — 'unsafe-inline' and
+      'unsafe-eval' on script-src, plus ws: on connect-src — and
+      correspondingly strict everywhere else.
+
+      The intent is:
+        - default-src 'self'     — every resource type not
+                                    overridden below is
+                                    restricted to the app's own
+                                    origin. External scripts,
+                                    external images, external
+                                    styles: all blocked by
+                                    default.
+        - script-src             — the app's own bundle plus the
+                                    two unsafe-* keywords Vite's
+                                    HMR injects in dev. In a
+                                    production build the main
+                                    process is expected to
+                                    tighten this (drop the two
+                                    unsafe keywords) via
+                                    session.defaultSession.webRequest
+                                    .onHeadersReceived, which
+                                    overrides the meta tag's policy
+                                    for the packaged app.
+        - style-src              — the app's own CSS plus
+                                    'unsafe-inline', which Tailwind
+                                    and Vite's dev-mode style
+                                    injection both require.
+        - img-src                — the app's own images plus
+                                    data: and blob: URLs, which
+                                    the renderer uses for icons and
+                                    in-memory previews.
+        - font-src               — the app's own fonts plus
+                                    data: URLs (some build
+                                    pipelines inline small fonts).
+        - connect-src            — the app's own origin, plus
+                                    ws:/wss: for Vite's HMR
+                                    websocket, plus http:/https:
+                                    so the renderer can reach the
+                                    backend API at whatever URL
+                                    the app is configured with.
+
+      The policy is intentionally not locked down to specific
+      hostnames: the backend API URL is a runtime configuration
+      (it lives in the app's settings store), and hard-coding a
+      hostname here would either break the app for users who
+      point it at a self-hosted server, or require rebuilding the
+      renderer for each deployment. The main process is the
+      correct place to enforce host-level restrictions if and
+      when they are needed.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline' 'unsafe-eval';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: blob:;
+        font-src 'self' data:;
+        connect-src 'self' ws: wss: http: https:;
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+      "
+    />
+
+    <title>WriteSpeare</title>
+  </head>
+
+  <body>
+    <!--
+      The single mount point the React renderer attaches to.
+
+      Every component tree in the app lives under this element.
+      The id is `root` by convention — every React quick-start
+      and every `createRoot(document.getElementById('root'))`
+      call in the codebase expects exactly this id. Changing it
+      would require changing the renderer's bootstrap file to
+      match, and there is no benefit to either.
+    -->
+    <div id="root"></div>
+
+    <!--
+      The renderer's entry module.
+
+      Vite resolves this path relative to the Vite project root
+      (which is `apps/desktop/`, the directory containing this
+      HTML file). The leading slash makes the path root-relative,
+      which is what Vite's dev server expects.
+
+      In development, this script tag causes the browser to
+      request the module from the Vite dev server. Vite compiles
+      the TypeScript on the fly and serves it with HMR wired in.
+
+      In production, Vite's build step rewrites this tag to point
+      at the bundled, minified, content-hashed JavaScript asset
+      under `dist/renderer/assets/`. The relative base (`base:
+      './'` in vite.config.ts) ensures the rewritten URL resolves
+      correctly when the packaged app loads the HTML over
+      `file://`.
+
+      `type="module"` is required — it tells the browser to load
+      the script as an ES module, which is what enables top-level
+      `import` statements and what Vite's transform pipeline
+      emits. A classic (non-module) script tag would fail to
+      parse the bundled output.
+    -->
+    <script type="module" src="/src/renderer/index.tsx"></script>
+  </body>
+</html>
