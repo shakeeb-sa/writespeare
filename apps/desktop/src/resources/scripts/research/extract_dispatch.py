@@ -106,11 +106,14 @@ What this module does NOT do:
       module connects to a port the caller supplies.
 
     * It does not detect paywalls, login walls, or anti-bot
-      interstitials. Those are the platform extractors' concerns
-      — the Reddit extractor knows what a Reddit login wall looks
-      like, the Medium extractor knows what Medium's paywall
-      looks like, etc. This module treats every non-empty result
-      as success and every empty-or-exception result as failure.
+      interstitials. Those are the platform-specific extractors'
+      concerns — a future Reddit extractor would know what a
+      Reddit login wall looks like, a future Medium extractor
+      would know what Medium's paywall looks like, etc. When a
+      platform-specific extractor is not present, the generic
+      extractor handles the URL and this module treats its
+      non-empty result as success and its empty result as
+      failure.
 
     * It does not re-fetch a URL that failed. A failed URL stays
       failed for the batch. The user can retry it by running the
@@ -293,17 +296,31 @@ def _extract_one(
 
     # ---- Lazy import of the platform module ----
     # The lazy pattern is required because this dispatcher is
-    # created BEFORE the five extractor modules it calls. A
-    # top-level `from research.extract_reddit import extract_url`
-    # would fail at import time today, and the failure would
-    # propagate up to `main.py`'s dispatcher — making the whole
-    # extract command fail before any URL was attempted. The lazy
-    # import moves the failure to the moment a URL of that
-    # platform actually appears in the batch.
+    # created BEFORE the platform-specific extractor modules it
+    # prefers. A top-level `from research.extract_reddit import
+    # extract_url` would fail at import time today, and the
+    # failure would propagate up to `main.py`'s dispatcher —
+    # making the whole extract command fail before any URL was
+    # attempted. The lazy import keeps the failure contained to
+    # the moment a URL of that platform actually appears in the
+    # batch.
     #
-    # The chosen module is imported fresh on every URL — Python's
-    # own import cache makes this nearly free (a dictionary lookup
-    # in sys.modules) after the first import of a given module. A
+    # When a platform-specific extractor is missing (a site whose
+    # dedicated extractor has not yet been written), the
+    # ImportError handler below falls back to the generic
+    # extractor rather than marking the URL as failed. The
+    # generic extractor uses trafilatura's heuristics and
+    # produces readable output for any HTML page — including
+    # reddit, quora, and medium pages — so a URL is never
+    # dropped merely because a specialised extractor does not
+    # exist yet. When a specialised extractor is added in a
+    # future session, the fallback stops firing for that platform
+    # automatically; no change to this file is required at that
+    # time.
+    #
+    # Each module is imported fresh on every URL — Python's own
+    # import cache makes this nearly free (a dictionary lookup in
+    # sys.modules) after the first import of a given module. A
     # future refactor could hoist the import to a module-level
     # cache, but the current form is simpler and the cost is
     # negligible.
@@ -319,10 +336,20 @@ def _extract_one(
         else:
             from research.extract_generic import extract_url
     except ImportError as exc:
+        # The platform-specific extractor is not installed (its
+        # module file does not exist yet). Fall back to the
+        # generic extractor rather than marking the URL as
+        # failed — the page is still fetchable, and the generic
+        # extractor's trafilatura-based extraction produces
+        # usable Markdown from any HTML page. When a specialised
+        # extractor is added in a future session, this fallback
+        # stops firing for that platform automatically, and no
+        # change to this file is required.
         log_warning(
-            f"Extractor for platform '{platform}' is not available: {exc}"
+            f"Platform-specific extractor for '{platform}' is not "
+            f"available ({exc}); using generic extractor."
         )
-        return None
+        from research.extract_generic import extract_url
 
     # ---- Call the extractor ----
     try:
