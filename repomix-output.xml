@@ -496,31 +496,7 @@ This section contains the contents of the repository's files.
 
 </file>
 
-<file path="apps/desktop/src/features/validation/components/ReadabilityPanel.tsx">
-
-</file>
-
 <file path="apps/desktop/src/features/validation/components/SeoPanel.tsx">
-
-</file>
-
-<file path="apps/desktop/src/features/validation/components/ValidationReport.tsx">
-
-</file>
-
-<file path="apps/desktop/src/features/validation/hooks/useValidation.ts">
-
-</file>
-
-<file path="apps/desktop/src/features/validation/ipc/validationIPC.ts">
-
-</file>
-
-<file path="apps/desktop/src/features/validation/services/validationService.ts">
-
-</file>
-
-<file path="apps/desktop/src/features/validation/store/validationStore.ts">
 
 </file>
 
@@ -25656,6 +25632,3021 @@ export const useTopicStore = create<TopicStoreState>((set, get) => ({
  * hook.
  */
 export default useTopicStore;
+</file>
+
+<file path="apps/desktop/src/features/validation/components/ReadabilityPanel.tsx">
+/**
+ * ReadabilityPanel — the readability section of the Report tab.
+ *
+ * Renders the six metrics the Python side's
+ * `validation/readability.py` produces, plus a status badge
+ * carrying the section's good / warning / fail classification.
+ *
+ * The panel is a pure renderer: it reads everything it needs from
+ * the `section` prop that `ValidationReport.tsx` passes it and
+ * holds no state, calls no hooks, and reaches no store. The same
+ * pattern applies to all six sibling panels.
+ *
+ * ── The six metrics ────────────────────────────────────────────
+ *
+ *   Flesch Reading Ease      0–100, higher is easier to read.
+ *                            Plain-English target: 60–70.
+ *
+ *   Flesch-Kincaid Grade     Approximate US school grade level.
+ *                            The plan's user journey targets 7–9.
+ *
+ *   Gunning Fog              Another grade-level index. Lower is
+ *                            easier. Target under 12.
+ *
+ *   SMOG Index               Grade-level index. Target under 12.
+ *
+ *   Avg Sentence Length      Words per sentence. Fifteen to
+ *                            twenty is a comfortable range for
+ *                            English prose.
+ *
+ *   Reading Time             Estimated seconds at 250 words per
+ *                            minute. Formatted here as "M min S
+ *                            sec" for readability.
+ *
+ *   Each metric is rendered as a labeled row: the metric's name
+ *   on the left, its value on the right, and — where the metric
+ *   has a known "good" band — a small muted hint of the target
+ *   range beneath the label.
+ *
+ * ── The status badge ───────────────────────────────────────────
+ *
+ *   The section's `status` field is one of the three values the
+ *   shared `ReportStatus` union declares. The badge uses the same
+ *   color and icon vocabulary as the sibling panels and the
+ *   `ValidationReport` header's banner, so a user scanning the
+ *   six panels for their statuses sees a consistent visual
+ *   signal across all seven.
+ *
+ * ── Layout ─────────────────────────────────────────────────────
+ *
+ *   The panel is a bordered card with a header row (icon, title,
+ *   status badge) and a body of metric rows separated by thin
+ *   dividers. The whole card is styled the same as every other
+ *   section panel; the shared visual treatment is what makes the
+ *   six panels read as one report rather than as six unrelated
+ *   widgets stacked vertically.
+ *
+ * ── What this panel does NOT do ────────────────────────────────
+ *
+ *   - It does not compute anything. Every number comes from the
+ *     Python-side validator that produced the report. The panel
+ *     formats them for display; it does not re-derive them.
+ *
+ *   - It does not distinguish "the metric was computed" from
+ *     "the metric was zero because the article was empty" — the
+ *     validator reports zero for both, and the report does not
+ *     carry a separate "why" field. A future session that wanted
+ *     that distinction would add a `note` field to the
+ *     `ReadabilityReport` type and populate it from the Python
+ *     side.
+ *
+ *   - It does not offer any interactive affordance. The metrics
+ *     are informational. An article with a readability issue is
+ *     fixed in the writer's edit flow (the Article tab's
+ *     `ArticlePreview` component's Edit mode), not from this
+ *     panel.
+ *
+ * Dependencies: react (no hooks used, but the JSX transform pulls
+ * the runtime in) + lucide-react + the shared types.
+ */
+
+import {
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+} from 'lucide-react';
+
+import type {
+  ReadabilityReport,
+  ReportStatus,
+} from '../../shared/types/index.js';
+
+// ============================================================
+//  Public types
+// ============================================================
+
+/**
+ * The props accepted by `ReadabilityPanel`.
+ *
+ * The component takes a single `section` prop — the readability
+ * section from the report. The parent (`ValidationReport.tsx`)
+ * passes `report.readability` directly, so the prop is typed
+ * as the section type from the shared `Report` interface.
+ */
+export interface ReadabilityPanelProps {
+  /** The readability section of the report. */
+  section: ReadabilityReport;
+}
+
+// ============================================================
+//  Internal — status badge
+// ============================================================
+//
+//  Same three-color scheme as the header banner in
+//  `ValidationReport.tsx`: green for good, amber for warning, red
+//  for fail. The label text matches the icon's semantic meaning
+//  rather than the raw enum value, so a user who has never seen
+//  the report's internal vocabulary still reads the badge
+//  correctly.
+
+interface StatusBadgeProps {
+  status: ReportStatus;
+}
+
+const StatusBadge = ({ status }: StatusBadgeProps) => {
+  if (status === 'good') {
+    return (
+      <span
+        className={
+          'inline-flex shrink-0 items-center gap-1 rounded-full ' +
+          'bg-emerald-100 px-2 py-0.5 text-xs font-medium ' +
+          'text-emerald-800 dark:bg-emerald-950 ' +
+          'dark:text-emerald-200'
+        }
+      >
+        <CheckCircle2 size={12} aria-hidden="true" />
+        <span>Good</span>
+      </span>
+    );
+  }
+  if (status === 'warning') {
+    return (
+      <span
+        className={
+          'inline-flex shrink-0 items-center gap-1 rounded-full ' +
+          'bg-amber-100 px-2 py-0.5 text-xs font-medium ' +
+          'text-amber-800 dark:bg-amber-950 ' +
+          'dark:text-amber-200'
+        }
+      >
+        <AlertTriangle size={12} aria-hidden="true" />
+        <span>Warning</span>
+      </span>
+    );
+  }
+  return (
+    <span
+      className={
+        'inline-flex shrink-0 items-center gap-1 rounded-full ' +
+        'bg-red-100 px-2 py-0.5 text-xs font-medium ' +
+        'text-red-800 dark:bg-red-950 ' +
+        'dark:text-red-200'
+      }
+    >
+      <XCircle size={12} aria-hidden="true" />
+      <span>Fail</span>
+    </span>
+  );
+};
+
+// ============================================================
+//  Internal — metric row
+// ============================================================
+//
+//  One labeled metric. The `hint` prop carries the target range
+//  or the interpretation guide the user reads to know whether the
+//  number is good, since the raw values (a Flesch score, a grade
+//  level) are not self-explanatory.
+
+interface MetricRowProps {
+  label: string;
+  value: string;
+  hint: string;
+}
+
+const MetricRow = ({ label, value, hint }: MetricRowProps) => (
+  <div className="flex items-baseline justify-between gap-4 py-2">
+    <div className="min-w-0 flex-1">
+      <p
+        className={
+          'text-sm font-medium text-text dark:text-neutral-100'
+        }
+      >
+        {label}
+      </p>
+      <p
+        className={
+          'mt-0.5 text-xs text-neutral-500 ' +
+          'dark:text-neutral-400'
+        }
+      >
+        {hint}
+      </p>
+    </div>
+    <p
+      className={
+        'shrink-0 text-sm font-semibold tabular-nums ' +
+        'text-text dark:text-neutral-100'
+      }
+    >
+      {value}
+    </p>
+  </div>
+);
+
+// ============================================================
+//  Internal helpers — formatting
+// ============================================================
+
+/**
+ * Format a number of seconds as a human-readable "M min S sec"
+ * string. Rounds to the nearest second, which is the granularity
+ * the reading time was computed at.
+ *
+ * An input of zero returns "0 sec" — this is the case for an
+ * empty article, and the string is the correct reading for it.
+ */
+const formatReadingTime = (seconds: number): string => {
+  const total = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(total / 60);
+  const remaining = total % 60;
+  if (minutes === 0) {
+    return `${remaining} sec`;
+  }
+  if (remaining === 0) {
+    return `${minutes} min`;
+  }
+  return `${minutes} min ${remaining} sec`;
+};
+
+// ============================================================
+//  ReadabilityPanel
+// ============================================================
+
+/**
+ * The readability section panel. See the file header for the
+ * panel's responsibilities, its six metrics, and the reasoning
+ * behind the layout choices.
+ */
+export const ReadabilityPanel = ({ section }: ReadabilityPanelProps) => {
+  return (
+    <section className="rounded-xl border border-neutral-200 bg-background dark:border-neutral-800">
+      {/* ---- Header ---- */}
+      <header
+        className={
+          'flex items-center justify-between gap-3 ' +
+          'border-b border-neutral-200 px-4 py-3 ' +
+          'dark:border-neutral-800'
+        }
+      >
+        <h3
+          className={
+            'text-sm font-semibold text-text ' +
+            'dark:text-neutral-100'
+          }
+        >
+          Readability
+        </h3>
+        <StatusBadge status={section.status} />
+      </header>
+
+      {/* ---- Metrics ---- */}
+      <div className="divide-y divide-neutral-100 px-4 dark:divide-neutral-800/60">
+        <MetricRow
+          label="Flesch Reading Ease"
+          value={section.fleschReadingEase.toFixed(1)}
+          hint="0–100. Higher is easier. Plain English: 60–70."
+        />
+        <MetricRow
+          label="Flesch-Kincaid Grade"
+          value={section.fleschKincaidGrade.toFixed(1)}
+          hint="US school grade level. Target: 7–9."
+        />
+        <MetricRow
+          label="Gunning Fog"
+          value={section.gunningFog.toFixed(1)}
+          hint="Grade-level index. Target: under 12."
+        />
+        <MetricRow
+          label="SMOG Index"
+          value={section.smogIndex.toFixed(1)}
+          hint="Grade-level index. Target: under 12."
+        />
+        <MetricRow
+          label="Avg Sentence Length"
+          value={`${section.avgSentenceLength.toFixed(1)} words`}
+          hint="Comfortable range: 15–20 words per sentence."
+        />
+        <MetricRow
+          label="Reading Time"
+          value={formatReadingTime(section.readingTimeSeconds)}
+          hint="Estimated at 250 words per minute."
+        />
+      </div>
+    </section>
+  );
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+/**
+ * The `ReadabilityPanel` component as the default export.
+ * `ValidationReport.tsx` imports it with the default form
+ * (`import ReadabilityPanel from './ReadabilityPanel.js'`), so
+ * this is the export that resolves that file's forward
+ * reference.
+ */
+export default ReadabilityPanel;
+</file>
+
+<file path="apps/desktop/src/features/validation/components/ValidationReport.tsx">
+/**
+ * ValidationReport — the Report tab's top-level component.
+ *
+ * Reads the current article from the writer store and the latest
+ * validation report from the validation hook, and renders the six
+ * section panels with the report's corresponding sections. A
+ * status banner at the top of the component shows the report's
+ * aggregate `overallStatus` (good / warning / fail). When no
+ * report exists yet, the component shows a "Run Validation"
+ * action; when a report exists, it shows a "Re-validate" action.
+ * While a run is in flight, a live progress panel replaces the
+ * panels' content.
+ *
+ * ── Where the six panels come from ─────────────────────────────
+ *
+ *   The six sibling components in this folder — `ReadabilityPanel`,
+ *   `SeoPanel`, `OriginalityPanel`, `AiMarkersPanel`,
+ *   `GrammarPanel`, `KeywordPanel` — are the six section renderers.
+ *   They are forward references: this file is created at Session 16,
+ *   step 124, and the panels at steps 125–130. Until those files
+ *   exist on disk, the six imports produce six `TS2307` errors. The
+ *   error count and its resolution are documented in the TypeScript
+ *   Integrity Check below.
+ *
+ *   Each panel is expected to accept a single prop: the section
+ *   object it renders. The prop shape is:
+ *
+ *     ReadabilityPanel  ←  section: ReadabilityReport
+ *     SeoPanel          ←  section: SeoReport
+ *     KeywordPanel      ←  section: KeywordReport
+ *     OriginalityPanel  ←  section: OriginalityReport
+ *     AiMarkersPanel    ←  section: AiMarkersReport
+ *     GrammarPanel      ←  section: GrammarReport
+ *
+ *   This file owns that prop interface — it is the caller, and the
+ *   panels will be created to match. A future session that needed
+ *   a panel to render from something other than its own section
+ *   (a sibling-panel link, a per-user threshold override) would
+ *   extend the corresponding panel's props; the call site here
+ *   gains a second attribute and no architectural change.
+ *
+ * ── Where the article comes from ───────────────────────────────
+ *
+ *   The Report tab needs an article's `_id` and its topic's `_id`
+ *   to call `runValidation(articleId, topicId)`. The `topic` prop
+ *   supplies the topic ID directly (`topic._id`). The article ID
+ *   comes from the writer store's `article` field — the same
+ *   `Article` object that the sibling `ArticlePreview` component
+ *   renders in the Article tab.
+ *
+ *   The consequence is documented in `WriterProgress.tsx`'s PLAN
+ *   DELTA 1: on a cold mount of a topic that has an article on
+ *   the backend but no article in the writer store, the Report
+ *   tab shows its "no article yet" empty state. The "load the
+ *   last article on mount" flow is a future session's addition.
+ *
+ * ── The five visual states ─────────────────────────────────────
+ *
+ *   The component renders one of five states:
+ *
+ *     1. NO ARTICLE — the writer store's `article` field is null.
+ *        A neutral message telling the user to generate an
+ *        article first. This is the cold-mount case for a topic
+ *        whose article has not been generated in this session.
+ *
+ *     2. NO REPORT — the article exists but no report has been
+ *        produced. A prompt card with a "Run Validation" button.
+ *
+ *     3. RUNNING — `isRunning` is true. A progress panel showing
+ *        which of the six validators is currently executing.
+ *
+ *     4. ERROR — `error` is non-null and `isRunning` is false. A
+ *        red banner with the message and two buttons: "Retry"
+ *        (re-runs the validation) and "Dismiss" (clears the
+ *        error).
+ *
+ *     5. HAS REPORT — a report exists. The status banner, the
+ *        header (with the "Re-validate" button), and the six
+ *        panels.
+ *
+ *   The state checks run in the order above. The `isRunning`
+ *   check runs before the `error` check because a validation
+ *   operation's error only becomes user-relevant after the
+ *   operation has stopped — while it is still running, the
+ *   progress panel is the correct visual regardless of what the
+ *   store's `error` field happens to hold from a previous run.
+ *
+ * ── The status banner ──────────────────────────────────────────
+ *
+ *   The banner's color and icon are driven by the report's
+ *   `overallStatus`, which is one of the three values the shared
+ *   `ReportStatus` union declares: `'good'`, `'warning'`, or
+ *   `'fail'`. The three-color scheme — green, amber, red — is the
+ *   one the plan's user-journey mockups show and the one the rest
+ *   of the app uses for the same three states.
+ *
+ *   The banner text is a short sentence that summarises the
+ *   aggregate: "Everything checks out", "A few warnings to
+ *   review", or "One or more sections failed". The report's six
+ *   panels below the banner carry the detail for each section.
+ *
+ * ── What this component does NOT do ────────────────────────────
+ *
+ *   - It does not fetch the article from the backend. See "Where
+ *     the article comes from" above for the reasoning.
+ *
+ *   - It does not persist the report. The validation IPC handler
+ *     is what POSTs the report to `/api/reports`.
+ *
+ *   - It does not render any section detail itself. Each panel
+ *     owns its own section's rendering; this component is the
+ *     composition layer.
+ *
+ *   - It does not offer a "regenerate with corrections" action.
+ *     The plan's user journey (Stage 6) describes that flow as a
+ *     future addition that feeds validation failures back to the
+ *     writer. The `revalidate` action the hook exposes is an
+ *     alias for `runValidation` today; the corrective loop's
+ *     wiring will use it once the feedback path is defined.
+ *
+ * Dependencies: react + lucide-react + the two sibling hooks + the
+ * six forward-referenced panels.
+ */
+
+import { useCallback } from 'react';
+import {
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  ShieldCheck,
+  XCircle,
+} from 'lucide-react';
+
+import { useValidation } from '../hooks/useValidation.js';
+import { useWriter } from '../../writer/hooks/useWriter.js';
+
+import ReadabilityPanel from './ReadabilityPanel.js';
+import SeoPanel from './SeoPanel.js';
+import OriginalityPanel from './OriginalityPanel.js';
+import AiMarkersPanel from './AiMarkersPanel.js';
+import GrammarPanel from './GrammarPanel.js';
+import KeywordPanel from './KeywordPanel.js';
+
+import type {
+  ReportStatus,
+  Topic,
+} from '../../shared/types/index.js';
+
+// ============================================================
+//  Public types
+// ============================================================
+
+/**
+ * The props accepted by `ValidationReport`.
+ *
+ * The component takes the full `Topic` object — the same shape
+ * every other stage component on the topic-detail page receives
+ * — so its validation action can pass `topic._id` as the
+ * `topicId` argument to the hook.
+ */
+export interface ValidationReportProps {
+  /** The topic whose report this view represents. */
+  topic: Topic;
+}
+
+// ============================================================
+//  Constants — status banner styling
+// ============================================================
+//
+//  A `Record<ReportStatus, {...}>` so the compiler enforces
+//  exhaustiveness: adding a fourth value to the union without
+//  adding an entry here is a compile error. Each entry carries
+//  the icon, the color classes for the banner container and the
+//  icon, and the banner's headline text.
+
+interface StatusStyle {
+  icon: typeof CheckCircle2;
+  containerClass: string;
+  iconClass: string;
+  headline: string;
+}
+
+const STATUS_STYLES: Record<ReportStatus, StatusStyle> = {
+  good: {
+    icon: CheckCircle2,
+    containerClass:
+      'bg-emerald-50 border-emerald-200 text-emerald-900 ' +
+      'dark:bg-emerald-950/60 dark:border-emerald-900 ' +
+      'dark:text-emerald-100',
+    iconClass: 'text-emerald-600 dark:text-emerald-400',
+    headline: 'Everything checks out.',
+  },
+  warning: {
+    icon: AlertTriangle,
+    containerClass:
+      'bg-amber-50 border-amber-200 text-amber-900 ' +
+      'dark:bg-amber-950/60 dark:border-amber-900 ' +
+      'dark:text-amber-100',
+    iconClass: 'text-amber-600 dark:text-amber-400',
+    headline: 'A few warnings to review.',
+  },
+  fail: {
+    icon: XCircle,
+    containerClass:
+      'bg-red-50 border-red-200 text-red-900 ' +
+      'dark:bg-red-950/60 dark:border-red-900 ' +
+      'dark:text-red-100',
+    iconClass: 'text-red-600 dark:text-red-400',
+    headline: 'One or more sections failed.',
+  },
+};
+
+// ============================================================
+//  Internal — progress line for the running state
+// ============================================================
+
+interface ProgressLineProps {
+  phase: string | null;
+  index: number | null;
+  total: number | null;
+}
+
+/**
+ * The progress line shown during a validation run. The line
+ * combines the current phase (the validator's name, humanised)
+ * with the "N of M" position. Both parts fall back to a generic
+ * "Starting validation…" when the store's `progress` field is
+ * still null — the moment between the click and the first
+ * marker's arrival.
+ */
+const ProgressLine = ({
+  phase,
+  index,
+  total,
+}: ProgressLineProps) => {
+  if (phase === null || index === null || total === null) {
+    return <span>Starting validation…</span>;
+  }
+  // The phase strings the Python side emits are snake_case
+  // (`ai_markers`, `keyword_check`'s `keywords`). Convert to a
+  // display form: underscores to spaces, capitalized first
+  // letter. The string is otherwise passed through unchanged.
+  const humanised = phase
+    .replace(/_/g, ' ')
+    .replace(/^\w/, (c) => c.toUpperCase());
+  return (
+    <span>
+      Running {humanised} · {index} of {total}
+    </span>
+  );
+};
+
+// ============================================================
+//  ValidationReport
+// ============================================================
+
+/**
+ * The Report tab. See the file header for the component's
+ * responsibilities, its five visual states, and the reasoning
+ * behind the design choices.
+ */
+export const ValidationReport = ({ topic }: ValidationReportProps) => {
+  const { article } = useWriter();
+  const {
+    report,
+    isRunning,
+    progress,
+    error,
+    runValidation,
+    clearError,
+  } = useValidation();
+
+  // ---- Start / retry ----
+  // The handler for the "Run Validation" button, the
+  // "Re-validate" button, and the error state's "Retry" button.
+  // All three trigger the same operation — a validation run on
+  // the current article, tagged with its topic's ID for the
+  // marker stream filter.
+  const handleStart = useCallback((): void => {
+    if (article === null) return;
+    void runValidation(article._id, topic._id);
+  }, [article, topic._id, runValidation]);
+
+  // ---- Dismiss ----
+  const handleDismiss = useCallback((): void => {
+    clearError();
+  }, [clearError]);
+
+  // ---- State 1: NO ARTICLE ----
+  // The writer store has no article for the current session.
+  // The most likely explanation for the user is "you have not
+  // generated one yet in this session" — the sibling WriterProgress
+  // panel in the Article tab is where generation happens.
+  if (article === null) {
+    return (
+      <div className="mx-auto flex max-w-md flex-col items-center gap-4 py-12 text-center">
+        <div
+          className={
+            'flex h-14 w-14 items-center justify-center ' +
+            'rounded-2xl bg-neutral-100 text-neutral-500 ' +
+            'dark:bg-neutral-800 dark:text-neutral-400'
+          }
+        >
+          <ShieldCheck size={28} aria-hidden="true" />
+        </div>
+        <div>
+          <h2
+            className={
+              'text-lg font-semibold text-text ' +
+              'dark:text-neutral-100'
+            }
+          >
+            No article to validate
+          </h2>
+          <p
+            className={
+              'mt-1 text-sm text-neutral-500 ' +
+              'dark:text-neutral-400'
+            }
+          >
+            Open the Article tab and click &ldquo;Generate
+            Article&rdquo; first. The validation runs against the
+            generated draft.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- State 3: RUNNING ----
+  // Checked before the error state so a running operation shows
+  // its progress panel regardless of what a previous run left in
+  // the store's `error` field.
+  if (isRunning) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className={
+          'flex items-center gap-3 rounded-xl border ' +
+          'border-neutral-200 bg-background p-4 ' +
+          'dark:border-neutral-800'
+        }
+      >
+        <Loader2
+          size={20}
+          className="shrink-0 animate-spin text-primary"
+          aria-hidden="true"
+        />
+        <div className="min-w-0 flex-1">
+          <p
+            className={
+              'text-sm font-medium text-text ' +
+              'dark:text-neutral-100'
+            }
+          >
+            <ProgressLine
+              phase={progress?.phase ?? null}
+              index={progress?.index ?? null}
+              total={progress?.total ?? null}
+            />
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- State 4: ERROR ----
+  // Shown when the last validation failed. A red banner with the
+  // message and two buttons: Retry and Dismiss.
+  if (error !== null) {
+    return (
+      <div
+        role="alert"
+        className={
+          'flex flex-col gap-3 rounded-xl border ' +
+          'border-red-200 bg-red-50 p-4 ' +
+          'dark:border-red-900 dark:bg-red-950/60'
+        }
+      >
+        <div className="flex items-start gap-2">
+          <AlertCircle
+            size={18}
+            className={
+              'mt-0.5 shrink-0 text-red-600 dark:text-red-400'
+            }
+            aria-hidden="true"
+          />
+          <p
+            className={
+              'min-w-0 flex-1 text-sm text-red-900 ' +
+              'dark:text-red-100'
+            }
+          >
+            {error}
+          </p>
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={handleDismiss}
+            className={
+              'rounded-lg border border-red-300 bg-transparent ' +
+              'px-3 py-1.5 text-xs font-medium text-red-800 ' +
+              'transition-colors hover:bg-red-100 ' +
+              'focus-visible:outline-none ' +
+              'dark:border-red-800 dark:text-red-200 ' +
+              'dark:hover:bg-red-900/40'
+            }
+          >
+            Dismiss
+          </button>
+          <button
+            type="button"
+            onClick={handleStart}
+            className={
+              'rounded-lg bg-red-600 px-3 py-1.5 text-xs ' +
+              'font-medium text-white transition-colors ' +
+              'hover:bg-red-700 focus-visible:outline-none'
+            }
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- State 2: NO REPORT ----
+  // The article exists but no validation has run. A prompt card
+  // with the "Run Validation" action.
+  if (report === null) {
+    return (
+      <div
+        className={
+          'flex items-center gap-3 rounded-xl border ' +
+          'border-neutral-200 bg-background p-4 ' +
+          'dark:border-neutral-800'
+        }
+      >
+        <div
+          className={
+            'flex h-10 w-10 shrink-0 items-center justify-center ' +
+            'rounded-full bg-neutral-100 text-neutral-500 ' +
+            'dark:bg-neutral-800 dark:text-neutral-400'
+          }
+        >
+          <ShieldCheck size={18} aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p
+            className={
+              'text-sm font-medium text-text ' +
+              'dark:text-neutral-100'
+            }
+          >
+            Ready to validate
+          </p>
+          <p
+            className={
+              'mt-0.5 text-xs text-neutral-500 ' +
+              'dark:text-neutral-400'
+            }
+          >
+            Check readability, SEO, keywords, originality, AI
+            markers, and grammar.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleStart}
+          className={
+            'shrink-0 rounded-lg bg-primary px-4 py-2 text-sm ' +
+            'font-medium text-white transition-colors ' +
+            'hover:bg-primary-dark focus-visible:outline-none'
+          }
+        >
+          Run Validation
+        </button>
+      </div>
+    );
+  }
+
+  // ---- State 5: HAS REPORT ----
+  // The report exists. Render the status banner, the header with
+  // the Re-validate action, and the six panels.
+  const statusStyle = STATUS_STYLES[report.overallStatus];
+  const StatusIcon = statusStyle.icon;
+
+  return (
+    <div className="space-y-6">
+      {/* ---- Status banner ---- */}
+      <div
+        className={
+          'flex items-start gap-3 rounded-xl border p-4 ' +
+          statusStyle.containerClass
+        }
+      >
+        <StatusIcon
+          size={22}
+          className={
+            'mt-0.5 shrink-0 ' + statusStyle.iconClass
+          }
+          aria-hidden="true"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold leading-snug">
+            {statusStyle.headline}
+          </p>
+          <p className="mt-0.5 text-xs opacity-80">
+            {report.readability.status === 'good' ? '✓' : '⚠'}{' '}
+            Readability · {report.seo.status === 'good' ? '✓' : '⚠'}{' '}
+            SEO ·{' '}
+            {report.keywords.status === 'good' ? '✓' : '⚠'}{' '}
+            Keywords ·{' '}
+            {report.originality.status === 'good' ? '✓' : '⚠'}{' '}
+            Originality ·{' '}
+            {report.aiMarkers.status === 'good' ? '✓' : '⚠'}{' '}
+            AI markers ·{' '}
+            {report.grammar.status === 'good' ? '✓' : '⚠'}{' '}
+            Grammar
+          </p>
+        </div>
+      </div>
+
+      {/* ---- Header row: timestamp + re-validate action ---- */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+          Validated{' '}
+          {new Date(report.createdAt).toLocaleString()}
+        </p>
+        <button
+          type="button"
+          onClick={handleStart}
+          className={
+            'rounded-lg border border-neutral-300 ' +
+            'bg-background px-3 py-1.5 text-xs font-medium ' +
+            'text-text transition-colors hover:bg-neutral-100 ' +
+            'focus-visible:outline-none ' +
+            'dark:border-neutral-700 dark:hover:bg-neutral-800 ' +
+            'dark:text-neutral-100'
+          }
+        >
+          Re-validate
+        </button>
+      </div>
+
+      {/* ---- The six panels ---- */}
+      {/* Each panel is a pure renderer of one section. The order
+          matches the plan's user-journey Stage 6 mockup: the
+          readability numbers first, then the structural SEO
+          shape, then the per-keyword placement, then the
+          originality and AI-marker signals, then the grammar
+          issues. A reader scanning the report top-to-bottom sees
+          the article's prose quality before its stylistic
+          fingerprints. */}
+      <div className="space-y-4">
+        <ReadabilityPanel section={report.readability} />
+        <SeoPanel section={report.seo} />
+        <KeywordPanel section={report.keywords} />
+        <OriginalityPanel section={report.originality} />
+        <AiMarkersPanel section={report.aiMarkers} />
+        <GrammarPanel section={report.grammar} />
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+/**
+ * The `ValidationReport` component as the default export.
+ * `TopicDetail.tsx` imports it with the default form
+ * (`import ValidationReport from '.../ValidationReport.js'`), so
+ * this is the export that resolves that file's forward reference.
+ */
+export default ValidationReport;
+</file>
+
+<file path="apps/desktop/src/features/validation/hooks/useValidation.ts">
+/**
+ * useValidation — the renderer's validation hook.
+ *
+ * The single entry point through which the app's components read
+ * and manipulate the validation feature's state. It sits over
+ * `useValidationStore` and mirrors the role `useTopics`,
+ * `useResearch`, `useDocuments`, and `useWriter` play for their
+ * respective features:
+ *
+ *   - The store owns the state. The hook does not add any.
+ *
+ *   - The store owns the async actions that reach the IPC layer
+ *     and, through it, the main process. The hook does not
+ *     reimplement them.
+ *
+ *   - The hook's only job is to give a component a single, stable
+ *     object with everything the validation feature exposes — the
+ *     data fields and the actions — under the names the plan's
+ *     Part 1.12 table declares.
+ *
+ * ── The hook's API ──────────────────────────────────────────────
+ *
+ *   Data fields:
+ *
+ *     activeArticleId  The article whose report the store holds,
+ *                      or null before any validation run.
+ *     activeTopicId    The topic whose markers the store filters
+ *                      on. Populated when a validation run starts.
+ *     isRunning        Whether a validation run is in flight.
+ *     progress         The live progress of the running operation,
+ *                      or null when none is running.
+ *     report           The last successfully-generated Report, or
+ *                      null before the first one.
+ *     status           The store's async lifecycle state.
+ *     error            The last error message, or null.
+ *
+ *   Actions:
+ *
+ *     runValidation(articleId, topicId)
+ *                      Start a validation operation. Resolves with
+ *                      the created `Report` on success, or null on
+ *                      failure.
+ *
+ *     revalidate(articleId, topicId)
+ *                      Same as `runValidation`, under the name the
+ *                      plan's Part 1.12 table uses. See "Why two
+ *                      names for one action" below.
+ *
+ *     loadReport(articleId)
+ *                      Fetch the most recent report for an article
+ *                      from the backend without re-running the
+ *                      validators. Resolves with the fetched
+ *                      `Report`, or null when none exists or the
+ *                      fetch failed.
+ *
+ *     setReport(report)
+ *                      Set the current report directly, without a
+ *                      network round trip.
+ *
+ *     clearError()     Clear the last error message.
+ *
+ *     reset()          Reset the store to its initial state.
+ *
+ * ── Why two names for one action ───────────────────────────────
+ *
+ *   The plan's Part 1.12 table declares the hook's actions as
+ *   `runValidation()` and `revalidate()`. That is the
+ *   specification this file must honor — a future reader who has
+ *   the plan in hand and opens this hook should see the two names
+ *   they expect.
+ *
+ *   Functionally, the two are identical today: both call the
+ *   store's `runValidation` action with the same two arguments,
+ *   and both produce the same result. The distinction the plan
+ *   draws between them is semantic — "run" for the first
+ *   validation on an article, "revalidate" for a subsequent one
+ *   after an edit — but the underlying operation is the same:
+ *   spawn the Python validators and store the resulting report.
+ *   The store's `runValidation` action does not distinguish "first
+ *   time" from "again" because the operation itself does not — a
+ *   second run replaces the previous `report` field with the new
+ *   one, exactly as the UI's "Re-validate" button should behave.
+ *
+ *   The plan's user journey (Stage 6) describes a future
+ *   corrective loop where a revalidation passes specific
+ *   validation failures back to the writer. When that feature
+ *   lands, `revalidate` will gain a second parameter (the
+ *   corrective feedback) and will call a different store action
+ *   with it, while `runValidation` stays argument-free. Until
+ *   then, both are aliases for the same store action.
+ *
+ *   The `useCallback` wrappers around `runValidation` and
+ *   `revalidate` are the one place this hook deviates from the
+ *   "select the action directly" pattern the sibling hooks use.
+ *   The reason is that the two names must have stable identities
+ *   across renders — a component that puts `revalidate` in a
+ *   `useEffect` dependency array expects it to be the same
+ *   function from one render to the next. Wrapping the store's
+ *   stable `runValidation` reference in a `useCallback` that
+ *   depends only on that reference produces a wrapper with a
+ *   stable identity across renders, which is what the caller
+ *   needs.
+ *
+ *   The `loadReport`, `setReport`, `clearError`, and `reset`
+ *   actions are exposed directly — they are already stable
+ *   references from the store, and there is no second name for
+ *   any of them.
+ *
+ * ── Why the two arguments on runValidation and revalidate ──────
+ *
+ *   The store's `runValidation` action takes both an `articleId`
+ *   and a `topicId`. The reason is documented in
+ *   `validationStore.ts`'s file header: the article ID is what
+ *   the IPC channel's `validation:run` takes (matching the
+ *   preload's fixed signature), and the topic ID is what the
+ *   Python-side markers carry (matching the `emit_marker` calls
+ *   in `validate_all.py`). The store needs both to correlate the
+ *   IPC call with the marker stream.
+ *
+ *   The hook preserves the two-argument signature for the same
+ *   reason. A caller that reads the article object it already has
+ *   in hand (`article._id` and `article.topicId`) passes both —
+ *   the two IDs travel together as a natural pair. A future
+ *   session that added a preload channel that resolved the topic
+ *   ID from the article ID (or that changed the marker payloads
+ *   to carry the article ID) could simplify the signature to one
+ *   argument; that change is a coordinated update across three
+ *   files (the preload, the IPC handler, and this hook) that the
+ *   current plan defers.
+ *
+ * ── Why the hook subscribes to each data field separately ───────
+ *
+ *   Same reasoning as the sibling hooks. Zustand re-renders a
+ *   component when any of the selectors it subscribed to returns
+ *   a different value; subscribing per-field gives the
+ *   finest-grained re-render behavior. The alternative — one
+ *   selector returning the whole state — would re-render on
+ *   every store change and need a shallow-equality comparator to
+ *   avoid wasted renders.
+ *
+ * ── What this hook does NOT do ──────────────────────────────────
+ *
+ *   - It does not call `runValidation` on mount. The hook is a
+ *     passive reader; the component that mounts it decides when
+ *     to fire a validation. The `ValidationReport` component
+ *     (Session 16, step 124) calls `runValidation(article._id,
+ *     article.topicId)` from a click handler, not from a mount
+ *     effect.
+ *
+ *   - It does not guard against the "no session" case. The
+ *     validation feature is authenticated-only; its components
+ *     render inside the layout's auth gate, which does not mount
+ *     its children until a session exists.
+ *
+ *   - It does not expose the store's internal `_handleMarker`
+ *     action. That action is called by the module-load listener,
+ *     never by a component. Exposing it would give a caller a
+ *     way to inject a fake marker event into the store, which
+ *     the current code has no reason to support.
+ *
+ *   - It does not derive a "current report is stale" flag. A
+ *     future session that wants to invalidate a report when the
+ *     article's content changes would add that derivation here
+ *     — comparing the report's `articleId` and the current
+ *     article's `_id` is not enough (they are always equal),
+ *     so the check would need the article's `updatedAt` field
+ *     compared against the report's `createdAt`. That check is
+ *     not required by the current plan.
+ */
+
+import { useCallback } from 'react';
+
+import {
+  useValidationStore,
+  type ValidationStoreStatus,
+  type ValidationProgress,
+} from '../store/validationStore.js';
+import type { Report } from '../../shared/types/index.js';
+
+// ============================================================
+//  Public types
+// ============================================================
+
+/**
+ * The shape of the object returned by `useValidation()`.
+ *
+ * Exported so that a helper function that takes "an instance of
+ * the validation hook" as a parameter can be typed against the
+ * interface without redeclaring the shape. A component that
+ * destructures the return value does not need to reference the
+ * interface at all.
+ */
+export interface ValidationHookValue {
+  // ---- Data ----
+
+  /** The article whose report the store holds, or null before the
+   *  first validation run. */
+  activeArticleId: string | null;
+
+  /** The topic whose markers the store filters on. Populated when
+   *  a validation run starts. */
+  activeTopicId: string | null;
+
+  /** Whether a validation run is currently in flight. */
+  isRunning: boolean;
+
+  /** The live progress of the running operation, or null when
+   *  none is running. */
+  progress: ValidationProgress | null;
+
+  /** The last successfully-generated report, or null before the
+   *  first one. */
+  report: Report | null;
+
+  /** The store's async lifecycle state. See `ValidationStoreStatus`
+   *  in `validationStore.ts` for the meaning of each value. */
+  status: ValidationStoreStatus;
+
+  /** The last error message from an async action, or null. */
+  error: string | null;
+
+  // ---- Actions ----
+
+  /** Start a validation operation for an article. Resolves with
+   *  the created `Report` on success, or null on failure. The
+   *  `topicId` argument is required to filter the marker stream
+   *  — see the file header for the reasoning. */
+  runValidation: (
+    articleId: string,
+    topicId: string
+  ) => Promise<Report | null>;
+
+  /** Re-run validation on an article. Same behavior as
+   *  `runValidation` — see the file header for why the two names
+   *  exist and when they will diverge. */
+  revalidate: (
+    articleId: string,
+    topicId: string
+  ) => Promise<Report | null>;
+
+  /** Fetch the most recent report for an article from the
+   *  backend without re-running the validators. Resolves with
+   *  the fetched `Report`, or null when none exists or the fetch
+   *  failed. */
+  loadReport: (articleId: string) => Promise<Report | null>;
+
+  /** Set the current report directly, without a network round
+   *  trip. Pass null to clear. */
+  setReport: (report: Report | null) => void;
+
+  /** Clear the last error message. */
+  clearError: () => void;
+
+  /** Reset the store to its initial state. */
+  reset: () => void;
+}
+
+// ============================================================
+//  The hook
+// ============================================================
+
+/**
+ * Return the validation feature's state and its actions. See the
+ * file header for the hook's role, its relationship to the store,
+ * and the reasoning behind the design choices.
+ */
+export const useValidation = (): ValidationHookValue => {
+  // ---- Data subscriptions ----
+  // One selector per data field. See the file header for why
+  // the fields are read individually rather than as one object.
+  const activeArticleId = useValidationStore((s) => s.activeArticleId);
+  const activeTopicId = useValidationStore((s) => s.activeTopicId);
+  const isRunning = useValidationStore((s) => s.isRunning);
+  const progress = useValidationStore((s) => s.progress);
+  const report = useValidationStore((s) => s.report);
+  const status = useValidationStore((s) => s.status);
+  const error = useValidationStore((s) => s.error);
+
+  // ---- Action subscriptions ----
+  // Zustand actions are stable references for the life of the
+  // store, so selecting them here does not cause re-renders.
+  const storeRunValidation = useValidationStore((s) => s.runValidation);
+  const loadReport = useValidationStore((s) => s.loadReport);
+  const setReport = useValidationStore((s) => s.setReport);
+  const clearError = useValidationStore((s) => s.clearError);
+  const reset = useValidationStore((s) => s.reset);
+
+  // ---- Adapters ----
+  // The `runValidation` and `revalidate` adapters are thin
+  // wrappers whose sole purpose is to give the two public action
+  // names stable identities across renders. See the file
+  // header's "Why two names for one action" section for the full
+  // reasoning.
+  const runValidation = useCallback(
+    async (
+      articleId: string,
+      topicId: string
+    ): Promise<Report | null> => {
+      return storeRunValidation(articleId, topicId);
+    },
+    [storeRunValidation]
+  );
+
+  const revalidate = useCallback(
+    async (
+      articleId: string,
+      topicId: string
+    ): Promise<Report | null> => {
+      return storeRunValidation(articleId, topicId);
+    },
+    [storeRunValidation]
+  );
+
+  // ---- Return ----
+  // A single object literal with all fourteen members. The order
+  // matches the interface above, so a reader comparing the two
+  // does not have to hunt for a member's position.
+  return {
+    activeArticleId,
+    activeTopicId,
+    isRunning,
+    progress,
+    report,
+    status,
+    error,
+    runValidation,
+    revalidate,
+    loadReport,
+    setReport,
+    clearError,
+    reset,
+  };
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+/**
+ * The hook as the default export, matching the convention used
+ * by every other hook and store in the codebase. Consumers that
+ * prefer the named form use `import { useValidation } from ...`;
+ * consumers that prefer the default form use
+ * `import useValidation from ...`. Both resolve to the same hook.
+ */
+export default useValidation;
+</file>
+
+<file path="apps/desktop/src/features/validation/ipc/validationIPC.ts">
+/**
+ * validationIPC — IPC handlers for the validation feature.
+ *
+ * Registers the two channels the renderer's
+ * `window.electronAPI.validation.*` methods invoke:
+ *
+ *   validation:run     — run the six validators on an article and
+ *                        return the resulting Report.
+ *   validation:report  — fetch the most recent report for an
+ *                        article from the backend.
+ *
+ * The two channels correspond one-to-one with the two methods
+ * the preload declares on `window.electronAPI.validation` —
+ * `run` and `report`.
+ *
+ * ── What the run handler does that the service does not ────────
+ *
+ *   The `validationService.runValidate` function produces a local
+ *   `.json` report file. The backend's `Report` entity is a Mongo
+ *   record with an `_id`, an `articleId`, a `topicId`, a
+ *   `userId`, a `createdAt`, and a computed `overallStatus` —
+ *   none of which the file carries. The run handler bridges the
+ *   two:
+ *
+ *     1. Receives the article's Mongo ID from the renderer.
+ *
+ *     2. Fetches the Article record from the backend to learn
+ *        its `topicId` — the identifier the local on-disk layout
+ *        keys on. Without this lookup, an article ID alone
+ *        cannot be resolved to a folder path.
+ *
+ *     3. Computes the topic folder, its `sources/` subfolder,
+ *        and finds the latest `.md` draft in the topic's
+ *        `article/` subfolder. The latest draft is the one the
+ *        writer step just produced; the pipeline's serial model
+ *        means there is no ambiguity about which draft the user
+ *        is validating.
+ *
+ *     4. Calls `runValidate({ topicId, articlePath, sourcesDir })`
+ *        and receives a `ValidationServiceResult`.
+ *
+ *     5. On success, reads the produced report file at
+ *        `result.reportPath`, parses its JSON, and extracts the
+ *        six sections (`readability`, `seo`, `keywords`,
+ *        `originality`, `aiMarkers`, `grammar`).
+ *
+ *     6. POSTs those six sections plus the article's Mongo ID to
+ *        the backend's `/api/reports` endpoint. The backend
+ *        derives `topicId` from the parent article and computes
+ *        `overallStatus` from the six section statuses — neither
+ *        is sent by this handler.
+ *
+ *     7. Returns the backend's response — a fully-populated
+ *        `Report` object with its Mongo-assigned `_id` and every
+ *        field the renderer needs to display the six panels.
+ *
+ * ── Why the handler fetches the Article from the backend ────────
+ *
+ *   The preload's `validation.run` signature takes a single
+ *   `articleId` argument. From an article ID alone, this handler
+ *   cannot compute a local file path: the file layout keys on the
+ *   TOPIC's ID, and the only link between an article and its
+ *   topic is the `topicId` field on the Article record, which
+ *   lives on the backend.
+ *
+ *   The alternative — having the renderer pass both an article ID
+ *   and a topic ID — would change the preload's signature, which
+ *   is out of scope for this file. The alternative of deriving
+ *   the topic ID from the on-disk folder structure (scanning every
+ *   topic's `article/` folder for a matching filename) would be
+ *   both slow and unreliable — the draft filenames are sequential
+ *   (`draft-01.md`, `draft-02.md`, ...) and do not encode the
+ *   article's Mongo ID.
+ *
+ *   The single GET request to `/api/articles/:id` is therefore the
+ *   correct resolution path. It runs once per validation
+ *   operation, and the backend's `getArticleById` handler answers
+ *   it with a single indexed lookup.
+ *
+ * ── What the report handler does ────────────────────────────────
+ *
+ *   The `validation:report` channel is a read-only fetch of an
+ *   existing report. It is used by a caller that wants to display
+ *   a previously-produced report without re-running the
+ *   validators — for example, the Article tab re-mounting after a
+ *   navigation, or a Report view that the user re-opens after
+ *   closing it.
+ *
+ *   The handler is a one-line forward of the article ID to the
+ *   backend's `GET /api/reports/article/:articleId/latest`
+ *   endpoint. All the interesting logic (which report is "latest",
+ *   ownership scoping, the 404-when-none-exists collapse) lives on
+ *   the backend.
+ *
+ * ── Error handling ─────────────────────────────────────────────
+ *
+ *   Every failure path — a missing `articleId`, an unreachable
+ *   backend, a missing draft file, a Python script that exits
+ *   non-zero, a report file that cannot be read or parsed — is
+ *   converted into a `{ success: false, error }` envelope. No
+ *   exception escapes the handlers: an unhandled rejection from
+ *   an IPC handler would arrive in the renderer as an unhandled
+ *   promise rejection, which is a strictly worse failure mode
+ *   than a well-formed error envelope the renderer's store can
+ *   unwrap.
+ *
+ * ── What this file does NOT do ──────────────────────────────────
+ *
+ *   - It does not launch Chrome. Validation has no browser
+ *     dependency — see `validationService.ts`'s header for the
+ *     reasoning.
+ *
+ *   - It does not hold report state between calls. Each
+ *     `validation:run` produces a fresh report; each
+ *     `validation:report` fetches the latest from the backend.
+ *     The renderer's store is what decides which report to
+ *     display.
+ *
+ *   - It does not cache the backend's Article lookup. A validation
+ *     operation is a user-triggered, low-frequency action; the
+ *     extra GET is invisible to the user and removing it would
+ *     require an invalidation strategy the plan does not call
+ *     for.
+ *
+ * Dependencies: electron + Node stdlib + the sibling validation
+ * service + the shared axios client.
+ */
+
+import { ipcMain, app, type IpcMainInvokeEvent } from 'electron';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+
+import { runValidate } from '../services/validationService.js';
+import { apiGet, apiPost } from '../../shared/api/client.js';
+import type {
+  ApiResponse,
+  Article,
+  Report,
+} from '../../shared/types/index.js';
+
+// ============================================================
+//  Channel name constants
+// ============================================================
+//
+// The two channel names are declared as constants so a future
+// refactor that renames them (or a test that spies on them) has
+// one place to change. The preload's `src/main/preload.ts`
+// declares the same strings on the renderer side of the bridge —
+// the two must stay in sync, but neither file imports from the
+// other.
+
+const CHANNEL_RUN = 'validation:run';
+const CHANNEL_REPORT = 'validation:report';
+
+// ============================================================
+//  Layout constants
+// ============================================================
+//
+// Same values `documentService.ts` and `writerIPC.ts` declare.
+// See `writerIPC.ts`'s header for the rationale on the
+// duplication across the three files.
+
+const APP_SLUG = 'writespeare';
+const TOPICS_SUBFOLDER = 'topics';
+const SOURCES_SUBFOLDER = 'sources';
+const ARTICLE_SUBFOLDER = 'article';
+const MARKDOWN_EXTENSION = '.md';
+
+// ============================================================
+//  Helpers — path computation
+// ============================================================
+
+/**
+ * Return the absolute path to a topic's folder.
+ * Same layout the sibling services use.
+ */
+const getTopicFolder = (topicId: string): string => {
+  return path.join(
+    app.getPath('appData'),
+    APP_SLUG,
+    TOPICS_SUBFOLDER,
+    topicId
+  );
+};
+
+/**
+ * Return the absolute path to a topic's `sources/` folder.
+ */
+const getSourcesFolder = (topicId: string): string => {
+  return path.join(getTopicFolder(topicId), SOURCES_SUBFOLDER);
+};
+
+/**
+ * Return the absolute path to a topic's `article/` folder.
+ */
+const getArticleFolder = (topicId: string): string => {
+  return path.join(getTopicFolder(topicId), ARTICLE_SUBFOLDER);
+};
+
+// ============================================================
+//  Helpers — latest draft resolution
+// ============================================================
+
+/**
+ * Return the absolute path to the latest `.md` draft in a topic's
+ * `article/` folder, or `null` when the folder is missing or
+ * contains no `.md` file.
+ *
+ * "Latest" is the lexically greatest filename. The writer step
+ * names its drafts with a zero-padded index (`draft-01.md`,
+ * `draft-02.md`, ...), so a lexical sort reproduces the temporal
+ * order — `draft-10.md` sorts after `draft-09.md`, and the last
+ * entry of the sorted list is the most recently produced draft.
+ *
+ * The function never throws. A missing folder (the writer step
+ * never ran for this topic) or an empty folder both return
+ * `null`, which the caller converts into a user-facing error.
+ */
+const findLatestDraft = async (
+  topicId: string
+): Promise<string | null> => {
+  const articleFolder = getArticleFolder(topicId);
+
+  let entries: string[];
+  try {
+    entries = await fs.readdir(articleFolder);
+  } catch {
+    return null;
+  }
+
+  const drafts = entries
+    .filter((name) => name.endsWith(MARKDOWN_EXTENSION))
+    .sort();
+
+  if (drafts.length === 0) {
+    return null;
+  }
+
+  // The last entry of the sorted list is the latest draft.
+  // `noUncheckedIndexedAccess` types the access as
+  // `string | undefined`; the length check above makes the
+  // undefined case impossible in practice, but the guard is
+  // retained for type safety.
+  const last = drafts[drafts.length - 1];
+  if (last === undefined) {
+    return null;
+  }
+  return path.join(articleFolder, last);
+};
+
+// ============================================================
+//  Helpers — report file reading
+// ============================================================
+
+/**
+ * Read a report file from disk and return its parsed JSON
+ * content as a `Record<string, unknown>`.
+ *
+ * The report file is written by the Python side's
+ * `validation/validate_all.py` and its shape is the `Report`
+ * interface's fields minus `_id`, `articleId`, `topicId`,
+ * `userId`, and `createdAt`, plus two local-only metadata fields
+ * (`articlePath` and `validatedAt`).
+ *
+ * The function returns the parsed JSON without validating the
+ * shape of its sections. The backend's `/api/reports` endpoint
+ * is the authoritative validator for those — see the handler's
+ * `apiPost` call for how the six sections are forwarded.
+ *
+ * Throws when the file cannot be read or when its content is not
+ * valid JSON. The caller catches the throw and converts it into
+ * an error envelope.
+ */
+const readReportFile = async (
+  reportPath: string
+): Promise<Record<string, unknown>> => {
+  const raw = await fs.readFile(reportPath, 'utf-8');
+  const parsed: unknown = JSON.parse(raw);
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    Array.isArray(parsed)
+  ) {
+    throw new Error('Report file is not a JSON object.');
+  }
+  return parsed as Record<string, unknown>;
+};
+
+// ============================================================
+//  registerValidationIPC
+// ============================================================
+
+/**
+ * Register the validation feature's IPC handlers.
+ *
+ * Called once, from `main/index.ts`, inside the
+ * `app.whenReady().then(...)` callback. The function is not
+ * idempotent — `ipcMain.handle` refuses to register a second
+ * handler for the same channel — matching the contract every
+ * other feature's `register*IPC()` function follows.
+ */
+export const registerValidationIPC = (): void => {
+  // ---- validation:run ----
+  //
+  // The renderer sends an `articleId` (a Mongo ObjectId string)
+  // and receives the fully-populated `Report` on success. See the
+  // file header for the full flow.
+  ipcMain.handle(
+    CHANNEL_RUN,
+    async (
+      _event: IpcMainInvokeEvent,
+      articleId: unknown
+    ): Promise<ApiResponse<Report>> => {
+      // ---- Validate ----
+      if (
+        typeof articleId !== 'string' ||
+        articleId.trim().length === 0
+      ) {
+        return { success: false, error: 'articleId is required.' };
+      }
+      const trimmedArticleId = articleId.trim();
+
+      // ---- Resolve the article's topic ----
+      // The GET returns the Article record whose `topicId` field
+      // is what the local on-disk layout keys on. Without this
+      // lookup, an article ID alone cannot be resolved to a
+      // folder path — see the file header for the reasoning.
+      const articleResult = await apiGet<Article>(
+        `/articles/${encodeURIComponent(trimmedArticleId)}`
+      );
+      if (!articleResult.success || !articleResult.data) {
+        return {
+          success: false,
+          error:
+            articleResult.error ??
+            'The article could not be found.',
+        };
+      }
+      const article = articleResult.data;
+      const topicId = article.topicId;
+
+      // ---- Compute the operation's inputs ----
+      const sourcesDir = getSourcesFolder(topicId);
+
+      const articlePath = await findLatestDraft(topicId);
+      if (articlePath === null) {
+        return {
+          success: false,
+          error:
+            'No article draft was found on disk for this topic. ' +
+            'Generate an article first, then run validation.',
+        };
+      }
+
+      // ---- Run the validation ----
+      // A rejection from `runValidate` would be unusual — the
+      // service's contract is "always resolve" — but the
+      // try/catch is here to catch an unexpected throw so the
+      // renderer sees a well-formed error envelope.
+      let result;
+      try {
+        result = await runValidate({
+          topicId,
+          articlePath,
+          sourcesDir,
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : String(err);
+        return {
+          success: false,
+          error: `Validation failed: ${message}`,
+        };
+      }
+
+      if (!result.success) {
+        return {
+          success: false,
+          error: result.error ?? 'Validation failed.',
+        };
+      }
+
+      if (result.reportPath.length === 0) {
+        return {
+          success: false,
+          error:
+            'Validation reported success but produced no report path.',
+        };
+      }
+
+      // ---- Read the report file ----
+      let reportData: Record<string, unknown>;
+      try {
+        reportData = await readReportFile(result.reportPath);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : String(err);
+        return {
+          success: false,
+          error: `Could not read the validation report: ${message}`,
+        };
+      }
+
+      // ---- POST the report to the backend ----
+      // The payload carries the six sections the Python side
+      // produced plus the article's Mongo ID. The backend
+      // derives `topicId` from the parent article and computes
+      // `overallStatus` from the six section statuses — neither
+      // is sent by this handler.
+      //
+      // The two local-only metadata fields the Python side
+      // wrote into the report file (`articlePath` and
+      // `validatedAt`) are deliberately NOT included in the
+      // POST body. The backend's schema does not declare them,
+      // and the `isPlainObject` guards in its controller would
+      // reject extra fields if it did — the safest posture is
+      // to send exactly the fields the backend declares.
+      const postResult = await apiPost<Report>('/reports', {
+        articleId: trimmedArticleId,
+        readability: reportData['readability'],
+        seo: reportData['seo'],
+        keywords: reportData['keywords'],
+        originality: reportData['originality'],
+        aiMarkers: reportData['aiMarkers'],
+        grammar: reportData['grammar'],
+      });
+
+      if (!postResult.success || !postResult.data) {
+        return {
+          success: false,
+          error:
+            postResult.error ??
+            'The report was generated but could not be saved.',
+        };
+      }
+
+      return {
+        success: true,
+        data: postResult.data,
+      };
+    }
+  );
+
+  // ---- validation:report ----
+  //
+  // Fetch the most recent report for an article from the
+  // backend. Read-only — no local files, no Python process, no
+  // side effects.
+  //
+  // The backend's `GET /api/reports/article/:articleId/latest`
+  // endpoint returns the newest report by `createdAt` for the
+  // given article, scoped to the authenticated user. A 404 means
+  // the article has no reports yet, which this handler forwards
+  // as an error envelope — the caller (the Report tab's initial
+  // mount) treats that as "no report yet" rather than as a hard
+  // failure.
+  ipcMain.handle(
+    CHANNEL_REPORT,
+    async (
+      _event: IpcMainInvokeEvent,
+      articleId: unknown
+    ): Promise<ApiResponse<Report>> => {
+      // ---- Validate ----
+      if (
+        typeof articleId !== 'string' ||
+        articleId.trim().length === 0
+      ) {
+        return { success: false, error: 'articleId is required.' };
+      }
+
+      return apiGet<Report>(
+        `/reports/article/${encodeURIComponent(
+          articleId.trim()
+        )}/latest`
+      );
+    }
+  );
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+/**
+ * The registration function as the default export, matching the
+ * convention used by every other IPC module in the codebase.
+ * `main/index.ts` uses the named import
+ * (`import { registerValidationIPC } from ...`), so the default
+ * form is a convenience rather than a load-bearing export.
+ */
+export default registerValidationIPC;
+</file>
+
+<file path="apps/desktop/src/features/validation/services/validationService.ts">
+/**
+ * validationService — orchestrates one validation operation.
+ *
+ * The validation stage takes a generated article and runs the six
+ * Python validators (readability, seo, keywords, originality, ai
+ * markers, grammar) against it, producing a report that the
+ * Article tab's Report view renders as six panels. This module is
+ * the main-process coordinator for that operation — the
+ * counterpart to `searchService.ts`, `extractionService.ts`, and
+ * `writerService.ts` for the validation stage.
+ *
+ * ── The flow ────────────────────────────────────────────────────
+ *
+ *   1. Spawn `python main.py validate` with the operation's
+ *      arguments. The task ID is derived from the topic ID
+ *      (`${topicId}-validate`) so a cancel call from a future
+ *      session can find the manager.
+ *
+ *   2. Subscribe to the manager's `stdout` event. Each line is
+ *      parsed as a `::ROOKIE::<TYPE>::<json>` marker; a parsed
+ *      marker is broadcast to every renderer window over the
+ *      `research:marker` IPC channel. `VALIDATION_PROGRESS`
+ *      markers drive the live progress panel (one per validator,
+ *      six in total); `VALIDATION_DONE` carries the terminal
+ *      `reportPath` and `overallStatus`; `TASK_START` /
+ *      `TASK_END` bracket the operation.
+ *
+ *   3. Wait for the child to exit. The exit code classifies the
+ *      outcome:
+ *
+ *        0   → success. The report was written; the
+ *              `VALIDATION_DONE` marker carries its path.
+ *        99  → the user clicked Skip. Return kind='user-skip'.
+ *        100 → the user clicked Stop. Return kind='user-stop'.
+ *        101 → the captcha policy was 'skip' and a captcha
+ *              appeared. Return kind='user-skip'. Validation
+ *              does not involve captchas, so this code is
+ *              classified the same way as the other three
+ *              services for uniformity — it should never fire
+ *              in practice.
+ *        any other non-zero → a generic failure. Return
+ *              kind='error' with the process's exit code in the
+ *              message.
+ *
+ *   4. Return the validation result. The function never rejects
+ *      — a failure is reported via the resolved result's
+ *      `success: false` and `kind` fields, matching the pattern
+ *      established by the other three services.
+ *
+ * ── No Chrome, no port ──────────────────────────────────────────
+ *
+ *   Validation is the only stage in the pipeline that does not
+ *   need a browser. The six validators are pure text analyses —
+ *   `textstat`, `nltk`, `sentence-transformers`, and
+ *   `language-tool-python` all operate on strings, not on pages.
+ *   The Python side's `main.py` accepts the `--port` flag on
+ *   every subcommand because the flag is declared on the shared
+ *   parent parser, but the `validate` handler ignores it.
+ *
+ *   This service therefore does NOT call `ensureChromeRunning`
+ *   and does NOT pass a `--port` argument. Omitting the argument
+ *   lets argparse apply its default (`9222`); the value is never
+ *   read by the validate handler.
+ *
+ *   The practical consequence: a validation operation succeeds
+ *   even when Chrome is closed, even when the user has never
+ *   launched the app's Chrome profile, and even on a fresh
+ *   install where the DeepSeek login has not been performed.
+ *   That independence is what makes validation safe to run at
+ *   any time — the user can validate an article immediately
+ *   after opening the app, before any browser-based stage has
+ *   been reached.
+ *
+ * ── The marker-routing design tradeoff ──────────────────────────
+ *
+ *   Same situation as the other three services: the listener
+ *   bridge was written to attach to a raw `ChildProcess`, but
+ *   `childProcessManager.ts` does not expose its internal
+ *   process. This module therefore attaches its own listener to
+ *   the manager's `stdout` events, parses markers with the same
+ *   local parser the other services use, and broadcasts them
+ *   itself using the same `MARKER_EVENT_CHANNEL` constant and the
+ *   same `webContents.send` shape.
+ *
+ *   This is the fourth copy of the same twenty-line parser in the
+ *   codebase. See `searchService.ts`'s file header for the full
+ *   rationale on why the current session accepts the duplication
+ *   rather than modifying the bridge or the manager to expose the
+ *   child. A future session that wants to eliminate the four
+ *   copies would give `ChildProcessManager` a public
+ *   `getProcess()` method or would change
+ *   `listenerBridge.attachToProcess` to accept a manager; either
+ *   change is a small, well-scoped refactor that the plan defers.
+ *
+ * ── Why the validation task ID differs from the other stage IDs ─
+ *
+ *   The validation uses `${topicId}-validate`, distinct from the
+ *   search's `${topicId}-search`, the extraction's
+ *   `${topicId}-extract`, and the writer's `${topicId}-write`.
+ *   The four are distinct so that, in principle, one of each
+ *   stage could run simultaneously for the same topic without
+ *   their manager registries colliding — the
+ *   `childProcessManager`'s registry is keyed by task ID, and a
+ *   collision would have the second `createProcessManager` call
+ *   return the first's manager.
+ *
+ *   The consequence a reader should be aware of: a "cancel"
+ *   operation for the validation needs to look up the validation's
+ *   task ID, not the search's or the writer's. The cancel IPC
+ *   handler for the validation will be added when the validation's
+ *   own IPC file is created (Session 16, step 121). Until then, no
+ *   cancel path for the validation exists — a validation run is
+ *   short (a few seconds to a few minutes) and the user's
+ *   alternative is to wait for it to finish.
+ *
+ * ── Why the service does not read the report file ───────────────
+ *
+ *   The Python script writes a JSON report to
+ *   `<topicFolder>/reports/report-<articleStem>.json`, and the
+ *   `VALIDATION_DONE` marker carries that path. This service
+ *   returns the path to the caller without reading the file —
+ *   the same pattern the writer service uses for its draft
+ *   path, and the same pattern the search and extraction
+ *   services use for their marker-carried data.
+ *
+ *   The caller (the validation's IPC handler, `validationIPC.ts`,
+ *   Session 16 step 121) reads the file, and — when the desktop
+ *   has an endpoint for it — POSTs the report's content to the
+ *   backend's `/api/reports` route, receiving back a full
+ *   `Report` object with the backend-assigned `_id`,
+ *   `articleId`, `topicId`, `userId`, and `createdAt` fields.
+ *   Keeping that read out of this service means the service
+ *   stays a pure "spawn Python, wait, return path" coordinator.
+ *
+ * ── What this module does NOT do ────────────────────────────────
+ *
+ *   - It does not launch or connect to Chrome. See "No Chrome,
+ *     no port" above.
+ *
+ *   - It does not persist the report to the backend. The
+ *     backend's `/api/reports` endpoint is written to by the
+ *     IPC handler, which reads the report file and POSTs it.
+ *
+ *   - It does not read the report file. See "Why the service
+ *     does not read the report file" above.
+ *
+ *   - It does not validate the sources directory's existence or
+ *     contents. The Python script does that — an empty or
+ *     missing sources folder produces a report whose originality
+ *     section is trivially good, per `validate_all.py`'s
+ *     `_load_source_docs` behavior.
+ *
+ *   - It does not retry a failed validation. The operation is
+ *     idempotent and cheap; a retry after a failure is a fresh
+ *     `runValidate` call, not an automatic behavior of this
+ *     function.
+ *
+ * ── Cross-feature imports ───────────────────────────────────────
+ *
+ *   This file imports two modules from the sibling `research`
+ *   feature: `listenerBridge` and `childProcessManager`. The
+ *   same PLAN DELTA that applied to `writerService.ts` applies
+ *   here — the plan's Part 9 note says shared infrastructure
+ *   lives under `features/automation`, but the plan's Part 1.9
+ *   file tree places these modules under `research/services/`,
+ *   and no `automation/services/` folder exists in the tree.
+ *   The codebase follows the tree.
+ *
+ * Dependencies: Node stdlib + electron + the two sibling
+ * research services.
+ */
+
+import { BrowserWindow } from 'electron';
+
+import {
+  MARKER_EVENT_CHANNEL,
+  type MarkerEvent,
+} from '../../research/services/listenerBridge.js';
+import {
+  createProcessManager,
+  disposeProcessManager,
+  type ProcessOptions,
+} from '../../research/services/childProcessManager.js';
+
+// =============================================================================
+//  Public types
+// =============================================================================
+
+/**
+ * The classification of a validation operation's outcome.
+ *
+ *   'success'    — the validation ran and the report was
+ *                  written. `success` is `true` and `reportPath`
+ *                  names the created file.
+ *   'error'      — the validation process failed for a reason
+ *                  other than a user action. The Python script
+ *                  could not find the article file, a validator
+ *                  crashed with an unhandled exception, an
+ *                  internal error occurred mid-run.
+ *   'user-skip'  — the user clicked Skip on a blocking prompt,
+ *                  or the operation was cancelled. Validation
+ *                  does not produce captcha or manual-action
+ *                  prompts, so this kind is only reachable
+ *                  through an explicit cancellation.
+ *   'user-stop'  — the user clicked Stop.
+ */
+export type ValidationResultKind =
+  | 'success'
+  | 'error'
+  | 'user-skip'
+  | 'user-stop';
+
+/**
+ * The options `runValidate` accepts.
+ */
+export interface ValidationServiceOptions {
+  /** The topic's ID. Used to derive the task ID (so a cancel
+   *  path can find the manager), and included in every marker
+   *  the Python script emits so the renderer routes the
+   *  progress to the right topic's panel. */
+  topicId: string;
+
+  /** The absolute path to the article `.md` file to validate.
+   *  The caller (`validationIPC.ts`) computes this path from the
+   *  topic ID and the article's filename. */
+  articlePath: string;
+
+  /** The absolute path to the topic's `sources/` folder — the
+   *  directory the originality validator reads to compare the
+   *  article against its sources. The caller computes this path
+   *  from the topic ID using the same convention
+   *  `documentService.ts` and `writerIPC.ts` use. */
+  sourcesDir: string;
+}
+
+/**
+ * The result of one `runValidate` call. Never thrown — the
+ * promise always resolves, and failures are described by the
+ * `success` / `kind` / `error` fields.
+ */
+export interface ValidationServiceResult {
+  /** True only when `kind === 'success'`. */
+  success: boolean;
+
+  /** The absolute path to the created report file. Populated on
+   *  success; empty when the operation failed before the report
+   *  was written. */
+  reportPath: string;
+
+  /** The aggregate status the Python script computed from the
+   *  six section statuses. Populated on success; empty on
+   *  failure. The value is one of `'good'`, `'warning'`, or
+   *  `'fail'` — the same closed set the shared `ReportStatus`
+   *  type declares. */
+  overallStatus: string;
+
+  /** The classification of the outcome. See
+   *  `ValidationResultKind`. */
+  kind: ValidationResultKind;
+
+  /** A human-readable error message. Present whenever `success`
+   *  is `false`. */
+  error?: string;
+}
+
+// =============================================================================
+//  Constants
+// =============================================================================
+
+/** The marker prefix that every Python script writes on stdout.
+ *  Must match `core/output.py` and `listenerBridge.ts`. */
+const MARKER_PREFIX = '::ROOKIE::';
+
+/** The exit code the Python side uses for "user clicked Skip"
+ *  (mirrors `core/output.py`'s `EXIT_SKIPPED`). */
+const EXIT_SKIPPED = 99;
+
+/** The exit code for "user clicked Stop" (`EXIT_STOPPED`). */
+const EXIT_STOPPED = 100;
+
+/** The exit code for "auto-skipped because captcha policy was
+ *  'skip'" (`EXIT_CAPTCHA_SKIP`). Never emitted by the validation
+ *  stage, but classified alongside the other exit codes for
+ *  uniformity with the sibling services. */
+const EXIT_CAPTCHA_SKIP = 101;
+
+// =============================================================================
+//  Helpers
+// =============================================================================
+
+/**
+ * Parse a single `::ROOKIE::<TYPE>::<json>` line into a
+ * `MarkerEvent`, or return `null` for a non-marker line.
+ *
+ * Same algorithm as `listenerBridge.ts`'s private parser and the
+ * copies in `searchService.ts`, `extractionService.ts`, and
+ * `writerService.ts`. See this file's header for the duplication
+ * rationale.
+ */
+const parseMarkerLine = (line: string): MarkerEvent | null => {
+  if (!line.startsWith(MARKER_PREFIX)) {
+    return null;
+  }
+  const afterPrefix = line.slice(MARKER_PREFIX.length);
+  const typeEnd = afterPrefix.indexOf('::');
+  if (typeEnd === -1) {
+    return null;
+  }
+  const type = afterPrefix.slice(0, typeEnd);
+  if (type.length === 0) {
+    return null;
+  }
+  const jsonText = afterPrefix.slice(typeEnd + 2);
+  let payload: unknown;
+  try {
+    payload = jsonText.length > 0 ? JSON.parse(jsonText) : {};
+  } catch {
+    return null;
+  }
+  return { type, payload };
+};
+
+/**
+ * Broadcast a parsed marker to every renderer window.
+ *
+ * Same shape and same channel as `listenerBridge.broadcast` — the
+ * renderer cannot tell which module emitted a given marker.
+ */
+const broadcastMarker = (event: MarkerEvent): void => {
+  const windows = BrowserWindow.getAllWindows();
+  for (const win of windows) {
+    if (win.isDestroyed()) continue;
+    win.webContents.send(MARKER_EVENT_CHANNEL, event);
+  }
+};
+
+/**
+ * Extract the `reportPath` and `overallStatus` fields from a
+ * `VALIDATION_DONE` marker's payload.
+ *
+ * A malformed payload — a non-object, a missing field, a
+ * non-string path — yields empty strings. The Python side is
+ * expected to emit a well-formed payload; the guard exists so a
+ * bug in the Python side produces an empty result, not a crash in
+ * the main process.
+ *
+ * The two fields are returned together because they come from the
+ * same marker and are consumed together — a `reportPath` without
+ * its `overallStatus` would require the caller to read the file
+ * to learn what the status is, and an `overallStatus` without its
+ * `reportPath` would give the caller no way to find the report
+ * the status describes.
+ */
+const extractValidationDoneFields = (
+  payload: unknown
+): { reportPath: string; overallStatus: string } => {
+  if (typeof payload !== 'object' || payload === null) {
+    return { reportPath: '', overallStatus: '' };
+  }
+  const p = payload as Record<string, unknown>;
+  const reportPath = p['reportPath'];
+  const overallStatus = p['overallStatus'];
+  return {
+    reportPath: typeof reportPath === 'string' ? reportPath : '',
+    overallStatus:
+      typeof overallStatus === 'string' ? overallStatus : '',
+  };
+};
+
+/**
+ * The deterministic task ID for a validation operation on a
+ * given topic. Exported so a future session's cancel handler can
+ * compute the same ID without duplicating the naming convention.
+ *
+ * See the file header for the reasoning behind using a distinct
+ * suffix from the other three services' task IDs.
+ */
+export const getValidationTaskId = (topicId: string): string => {
+  return `${topicId}-validate`;
+};
+
+// =============================================================================
+//  Public entry point
+// =============================================================================
+
+/**
+ * Run a validation operation and return the path of the created
+ * report, or a structured failure.
+ *
+ * See the file header for the full flow. The function never
+ * rejects — a failure is reported via the resolved result's
+ * `success: false` and `kind` fields.
+ *
+ * The per-validator progress is delivered to the renderer through
+ * the marker channel, not through the returned promise. The
+ * promise resolves once the child has exited with the terminal
+ * report path and overall status.
+ */
+export const runValidate = async (
+  options: ValidationServiceOptions
+): Promise<ValidationServiceResult> => {
+  // ---- Validate ----
+  // Three guards, all of which would produce confusing
+  // downstream errors if allowed through. An empty topic ID
+  // cannot be used as a task ID (the manager's constructor
+  // rejects it with a less-clear message). An empty article
+  // path or sources directory would have the Python script fail
+  // with a message about a missing argument, which these early
+  // checks produce more clearly.
+  if (
+    typeof options.topicId !== 'string' ||
+    options.topicId.trim().length === 0
+  ) {
+    return {
+      success: false,
+      reportPath: '',
+      overallStatus: '',
+      kind: 'error',
+      error: 'Topic ID is required.',
+    };
+  }
+  if (
+    typeof options.articlePath !== 'string' ||
+    options.articlePath.trim().length === 0
+  ) {
+    return {
+      success: false,
+      reportPath: '',
+      overallStatus: '',
+      kind: 'error',
+      error: 'Article path is required.',
+    };
+  }
+  if (
+    typeof options.sourcesDir !== 'string' ||
+    options.sourcesDir.trim().length === 0
+  ) {
+    return {
+      success: false,
+      reportPath: '',
+      overallStatus: '',
+      kind: 'error',
+      error: 'Sources directory is required.',
+    };
+  }
+
+  // ---- Set up the process manager ----
+  const taskId = getValidationTaskId(options.topicId);
+
+  // Dispose any manager that survived a previous operation on
+  // this topic. A stale manager could happen if the previous
+  // validation crashed without going through `settle`. Disposing
+  // is a no-op when no manager exists for this task ID.
+  disposeProcessManager(taskId);
+
+  const manager = createProcessManager(taskId);
+
+  return new Promise<ValidationServiceResult>((resolve) => {
+    let settled = false;
+    // The terminal path and status are populated when the
+    // VALIDATION_DONE marker arrives. They remain empty if the
+    // process exits before the marker was emitted, which the
+    // exit handler reports as a failure — the caller sees an
+    // empty reportPath and knows no report was written.
+    let lastReportPath = '';
+    let lastOverallStatus = '';
+
+    /**
+     * Finalize the operation: mark as settled, dispose the
+     * manager (which kills the child if it is still running),
+     * resolve the promise. Idempotent — a second call is a no-op.
+     *
+     * The manager is disposed BEFORE the resolve because
+     * disposing is what stops any pending child from continuing
+     * to emit events into a promise that has already resolved.
+     */
+    const settle = (result: ValidationServiceResult): void => {
+      if (settled) return;
+      settled = true;
+      disposeProcessManager(taskId);
+      resolve(result);
+    };
+
+    // ---- stdout handler ----
+    // Each line that parses as a marker is broadcast to every
+    // renderer window. VALIDATION_DONE markers also update the
+    // local path and status so the exit handler can return them.
+    manager.on('stdout', (line: string) => {
+      const marker = parseMarkerLine(line);
+      if (marker === null) return;
+      broadcastMarker(marker);
+      if (marker.type === 'VALIDATION_DONE') {
+        const fields = extractValidationDoneFields(marker.payload);
+        lastReportPath = fields.reportPath;
+        lastOverallStatus = fields.overallStatus;
+      }
+    });
+
+    // ---- exit handler ----
+    // The exit code classifies the outcome. `code` is `number |
+    // null` — a null arrives when the process was terminated by a
+    // signal rather than exiting on its own.
+    //
+    // Unlike `extractionService`, there is no "ran but produced
+    // nothing" branch here. The validation either writes a
+    // report (exit 0, VALIDATION_DONE seen) or it does not (any
+    // non-zero exit, including a validator that raised an
+    // unhandled exception). The Python script's own logic
+    // ensures that a successful run always emits
+    // VALIDATION_DONE before returning 0, so the exit-code
+    // classification is sufficient.
+    manager.on(
+      'exit',
+      (code: number | null, _signal: string | null) => {
+        if (code === 0) {
+          settle({
+            success: true,
+            reportPath: lastReportPath,
+            overallStatus: lastOverallStatus,
+            kind: 'success',
+          });
+          return;
+        }
+        if (code === EXIT_SKIPPED || code === EXIT_CAPTCHA_SKIP) {
+          settle({
+            success: false,
+            reportPath: lastReportPath,
+            overallStatus: lastOverallStatus,
+            kind: 'user-skip',
+            error: 'Validation skipped by user.',
+          });
+          return;
+        }
+        if (code === EXIT_STOPPED) {
+          settle({
+            success: false,
+            reportPath: lastReportPath,
+            overallStatus: lastOverallStatus,
+            kind: 'user-stop',
+            error: 'Validation stopped by user.',
+          });
+          return;
+        }
+        settle({
+          success: false,
+          reportPath: lastReportPath,
+          overallStatus: lastOverallStatus,
+          kind: 'error',
+          error: `Validation process exited with code ${
+            code ?? 'unknown'
+          }.`,
+        });
+      }
+    );
+
+    // ---- error handler ----
+    // The manager's `error` event fires when the child fails to
+    // spawn (ENOENT, EACCES) or encounters a runtime error.
+    manager.on('error', (err: Error) => {
+      settle({
+        success: false,
+        reportPath: lastReportPath,
+        overallStatus: lastOverallStatus,
+        kind: 'error',
+        error: err.message,
+      });
+    });
+
+    // ---- timeout handler ----
+    // Fires when the caller set a timeout and the child exceeded
+    // it. `runValidate` does not set one by default — the plan's
+    // Part 5 milestone description has the validation running as
+    // a foreground operation with a visible progress panel — so
+    // this path only fires if a future caller overrides the
+    // default.
+    manager.on('timeout', () => {
+      settle({
+        success: false,
+        reportPath: lastReportPath,
+        overallStatus: lastOverallStatus,
+        kind: 'error',
+        error: 'Validation timed out.',
+      });
+    });
+
+    // ---- killed handler ----
+    // Fires when the manager's `kill()` terminates the child
+    // directly (a hard cancel). Treating it as a user skip is
+    // the correct semantic — the user asked for the operation to
+    // end, and the operation ended.
+    manager.on('killed', () => {
+      settle({
+        success: false,
+        reportPath: lastReportPath,
+        overallStatus: lastOverallStatus,
+        kind: 'user-skip',
+        error: 'Validation was cancelled.',
+      });
+    });
+
+    // ---- Build the arguments ----
+    // The Python subcommand takes the operation name, the
+    // operation's inputs, and the `--control-mode` flag. No
+    // `--port` is passed — the validate handler does not need a
+    // browser and does not read the value. See the file header's
+    // "No Chrome, no port" section for the full reasoning.
+    const args: string[] = [
+      'validate',
+      '--article', options.articlePath,
+      '--sources-dir', options.sourcesDir,
+      '--control-mode',
+    ];
+
+    const startOptions: ProcessOptions = { args };
+
+    // ---- Spawn ----
+    // `start()` resolves once the child is spawned. Its promise
+    // can reject if the spawn call itself throws; the catch
+    // converts a rejection into the same `settle` the error
+    // handler uses, so the caller always sees a resolved result.
+    void manager.start(startOptions).catch((err: unknown) => {
+      settle({
+        success: false,
+        reportPath: '',
+        overallStatus: '',
+        kind: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  });
+};
+
+// =============================================================================
+//  Default export
+// =============================================================================
+
+/**
+ * Every export bundled under one default object, matching the
+ * convention of the sibling service modules (`searchService`,
+ * `extractionService`, `writerService`, `chromeLauncher`,
+ * `childProcessManager`). A caller that prefers named imports
+ * uses `import { runValidate } from ...`; a caller that prefers
+ * the default form uses `import validationService from ...` and
+ * destructures.
+ */
+export default {
+  runValidate,
+  getValidationTaskId,
+};
+</file>
+
+<file path="apps/desktop/src/features/validation/store/validationStore.ts">
+/**
+ * validationStore — the renderer's transient state for the
+ * validation feature.
+ *
+ * Holds the state that drives the Report tab on the topic-detail
+ * page while a validation run is in flight and after it finishes:
+ *
+ *   activeArticleId — which article the state belongs to.
+ *   isRunning       — whether a validation operation is in flight.
+ *                     Drives the Report tab's progress panel and
+ *                     the disabled state of the "Run Validation"
+ *                     button.
+ *   progress        — the live progress of the running operation
+ *                     (which of the six validators is currently
+ *                     executing), or null when no run is in
+ *                     flight.
+ *   report          — the `Report` object the backend returned for
+ *                     the last successful validation run, or null
+ *                     before the first run. The Report tab's six
+ *                     panels render from this object's section
+ *                     fields.
+ *   status          — a coarse lifecycle flag mirroring the shape
+ *                     every other store uses (`'idle'`,
+ *                     `'loading'`, `'error'`). `isRunning` is
+ *                     derived from this and is exposed as a
+ *                     convenience for the UI.
+ *   error           — the last error message, or null.
+ *
+ * And the actions:
+ *
+ *   runValidation(articleId) — start a validation operation. Sets
+ *                              `isRunning: true`, kicks off the
+ *                              IPC call, and updates state as the
+ *                              operation runs and as markers
+ *                              arrive.
+ *   loadReport(articleId)    — fetch the most recent report for
+ *                              an article from the backend
+ *                              without re-running the validators.
+ *   setReport(report)        — set the current report directly,
+ *                              without a network round trip.
+ *   clearError()             — dismiss the last error.
+ *   reset()                  — return every field to its initial
+ *                              value.
+ *
+ * ── How the store receives updates ────────────────────────────
+ *
+ *   Same pattern as `researchStore.ts`, `documentStore.ts`, and
+ *   `writerStore.ts`. On module load, the store installs ONE
+ *   listener on the `research:marker` channel via the preload's
+ *   generic `window.electronAPI.on(...)` API. Every marker the
+ *   main process emits — from searchService, extractionService,
+ *   writerService, and validationService — flows through that
+ *   one channel, and each store's handler routes the marker
+ *   types it cares about to its own state.
+ *
+ *   The validation store's handler reacts to `VALIDATION_PROGRESS`
+ *   and `VALIDATION_DONE`. It ignores every other marker type.
+ *
+ *   The filtering is by article, not by topic, because the
+ *   validation IPC handler already resolves the article's topic
+ *   internally. The validation markers emitted by
+ *   `validate_all.py` carry a `topicId` (matching the store's
+ *   `activeTopicId` field) rather than an `articleId` — the
+ *   Python side does not know the article's Mongo ID, which is
+ *   assigned by the backend. The store therefore tracks both
+ *   an `activeArticleId` (the caller's argument, used to
+ *   correlate with the report the backend returns) and an
+ *   `activeTopicId` (the value the markers carry, used to filter
+ *   the marker stream). See `setActiveTopicFromArticle` for the
+ *   contract between the two.
+ *
+ * ── Why the store tracks both an article ID and a topic ID ────
+ *
+ *   A validation operation is keyed on an article (the IPC
+ *   handler's `run` channel takes an `articleId`), but the
+ *   Python script that runs the validators is keyed on a topic
+ *   (it reads the topic's `sources/` folder for the originality
+ *   check and writes its report into the topic's `reports/`
+ *   folder). The two identifiers are both required:
+ *
+ *     * `activeArticleId` is what the renderer passes back to the
+ *       `validation:run` and `validation:report` IPC channels.
+ *
+ *     * `activeTopicId` is what the marker handler compares
+ *       against each incoming marker's `topicId` field.
+ *
+ *   The caller (the Report tab component) knows both values — it
+ *   has the `Article` object in hand and can read its `topicId`
+ *   field — and passes them to `runValidation` and `loadReport`
+ *   together. The store does not attempt to derive one from the
+ *   other.
+ *
+ * ── Why `isRunning` is not flipped by the VALIDATION_DONE marker ─
+ *
+ *   The `VALIDATION_DONE` marker is emitted by the Python script
+ *   BEFORE the validation IPC handler has finished its work.
+ *   After the marker arrives, the main process still has to (a)
+ *   read the report file from disk, (b) POST it to the backend's
+ *   `/api/reports` endpoint, and (c) return the resulting
+ *   `Report` to the renderer. Flipping `isRunning` to false on
+ *   the marker would tell the UI "we are done" before the report
+ *   object is in the store, producing a brief interval where the
+ *   Report tab shows neither a progress panel nor a finished
+ *   report.
+ *
+ *   The `runValidation` action therefore owns `isRunning` from
+ *   start to finish. The `VALIDATION_DONE` marker handler only
+ *   clears the `progress` field — the progress panel is no
+ *   longer relevant once the child has exited — and the
+ *   `runValidation` action's terminal branch flips both `status`
+ *   and `isRunning` when the IPC promise resolves.
+ *
+ * ── Why the store is NOT persisted ────────────────────────────
+ *
+ *   Same reasoning as the sibling stores. The report object is
+ *   an in-memory mirror of a backend record; a fresh session
+ *   repopulates it by running validation again or by fetching
+ *   from the backend. The `isRunning`, `progress`, and `error`
+ *   fields are ephemeral by definition.
+ *
+ * ── The single-article design ─────────────────────────────────
+ *
+ *   The store holds one article's validation state at a time,
+ *   identified by `activeArticleId`. Same model as the sibling
+ *   stores. A future session that wanted parallel validation
+ *   across multiple articles would convert the flat state into a
+ *   `Map<articleId, ValidationState>` — a mechanical change
+ *   confined to this file.
+ *
+ * ── Why the type-only import from listenerBridge ──────────────
+ *
+ *   `MarkerEvent` is declared in `listenerBridge.ts`, a
+ *   main-process module that imports `BrowserWindow` from
+ *   `electron`. A runtime import would crash the renderer at
+ *   bundle time. The `import type` form is erased by the
+ *   compiler, so the runtime bundle contains no reference to
+ *   `listenerBridge`.
+ *
+ *   The channel name `'research:marker'` is declared as a local
+ *   constant in this file rather than imported, for the same
+ *   reason. The two strings must match; the cross-module contract
+ *   is documented in both files.
+ *
+ * ── What this store does NOT do ────────────────────────────────
+ *
+ *   - It does not persist. See above.
+ *
+ *   - It does not call the backend directly. The validation IPC
+ *     handler (in the main process) is what POSTs the report to
+ *     `/api/reports`; the store only invokes the IPC channel and
+ *     receives the resulting `Report`.
+ *
+ *   - It does not handle the captcha or manual-action modals.
+ *     Those markers reach the renderer over the same channel and
+ *     are routed by the automation store (Session 20). This
+ *     store's handler explicitly ignores them.
+ *
+ *   - It does not distinguish "no report yet" from "the report is
+ *     being fetched". Both cases are represented by
+ *     `report === null` with `isRunning` being the
+ *     differentiator. A component that renders the Report tab
+ *     reads both fields.
+ */
+
+import { create } from 'zustand';
+
+import type { MarkerEvent } from '../../research/services/listenerBridge.js';
+import type { Report } from '../../shared/types/index.js';
+
+// =============================================================================
+//  Channel name
+// =============================================================================
+//
+//  The IPC channel the main process emits every marker on. Must
+//  match `listenerBridge.ts`'s exported `MARKER_EVENT_CHANNEL`
+//  constant and the sibling stores' local declarations of the
+//  same value. Declared locally because the bridge module cannot
+//  be imported at runtime — see the file header.
+
+const MARKER_CHANNEL = 'research:marker';
+
+// =============================================================================
+//  Public types
+// =============================================================================
+
+/**
+ * Live progress of a running validation. Reported by the Python
+ * script's `VALIDATION_PROGRESS` markers, one per validator. The
+ * six validators the Python side runs are the six section names
+ * on the `Report` interface, in the same order: readability, seo,
+ * keywords, originality, ai_markers, grammar.
+ *
+ * The `phase` string is the validator's name as the Python side
+ * spells it (with underscores, matching the `_PHASES` tuple in
+ * `validation/validate_all.py`). The `index` and `total` fields
+ * give the panel enough information to render a "3 of 6" line.
+ */
+export interface ValidationProgress {
+  /** Which validator is currently running. One of the six
+   *  underscore-separated phase names. */
+  phase: string;
+
+  /** The 1-based index of the validator in the run. */
+  index: number;
+
+  /** The total number of validators (currently six). */
+  total: number;
+}
+
+/**
+ * The store's async lifecycle state. Same shape as the sibling
+ * stores' status types.
+ *
+ *   'idle'    — no operation is running, and the last one (if
+ *               any) succeeded. The default state.
+ *   'loading' — a validation run is in flight. Also reflected in
+ *               the `isRunning` boolean, which exists as a
+ *               convenience for consumers that only care about
+ *               that one boolean.
+ *   'error'   — the last operation failed. The `error` field
+ *               carries a user-facing message.
+ */
+export type ValidationStoreStatus = 'idle' | 'loading' | 'error';
+
+/**
+ * The full shape of the validation store's state, including both
+ * the data fields and the actions.
+ */
+export interface ValidationStoreState {
+  // ---- Data ----
+
+  /** The article whose report the store holds, or null before any
+   *  validation run. */
+  activeArticleId: string | null;
+
+  /** The topic whose markers the store filters on. Populated by
+   *  the caller when starting a validation run, so the marker
+   *  handler can match the `topicId` field that the Python-side
+   *  markers carry. */
+  activeTopicId: string | null;
+
+  /** Whether a validation run is currently in flight. */
+  isRunning: boolean;
+
+  /** The live progress of the running validation, or null when
+   *  no run is in flight. */
+  progress: ValidationProgress | null;
+
+  /** The `Report` object from the last successful validation, or
+   *  null before the first one. */
+  report: Report | null;
+
+  /** The store's async lifecycle state. */
+  status: ValidationStoreStatus;
+
+  /** The last error message, or null. */
+  error: string | null;
+
+  // ---- Actions ----
+
+  /**
+   * Run a validation on an article. Invokes
+   * `window.electronAPI.validation.run(articleId)` and updates
+   * state as the operation runs. Progress arrives through the
+   * marker channel; the final `Report` arrives as this action's
+   * return value.
+   *
+   * The `topicId` argument is required so the store can filter
+   * the marker stream. The caller has the `Article` object in
+   * hand and reads its `topicId` field. See the file header for
+   * the reasoning on tracking both IDs.
+   *
+   * Returns the created `Report` on success, or null on failure.
+   */
+  runValidation: (
+    articleId: string,
+    topicId: string
+  ) => Promise<Report | null>;
+
+  /**
+   * Fetch the most recent report for an article from the backend.
+   * Does not re-run the validators. Used by the Report tab's
+   * "load existing report on mount" flow.
+   *
+   * Returns the fetched `Report` on success, or null on failure.
+   * A 404 (no report yet for this article) resolves as a null
+   * return with `error` set — the caller treats that as "no
+   * report yet" rather than as a hard failure.
+   */
+  loadReport: (articleId: string) => Promise<Report | null>;
+
+  /**
+   * Set the current report directly, without a network round
+   * trip. Used by a caller that produced a Report through some
+   * other path or wants to restore a previously-cached report.
+   */
+  setReport: (report: Report | null) => void;
+
+  /** Clear the last error message. */
+  clearError: () => void;
+
+  /** Reset every field to its initial value. */
+  reset: () => void;
+
+  /**
+   * Internal — route one marker event to the correct state
+   * update. Called by the module-level listener installed at
+   * import time; not intended for direct use by components.
+   */
+  _handleMarker: (event: MarkerEvent) => void;
+}
+
+// =============================================================================
+//  Initial state
+// =============================================================================
+
+/**
+ * The store's initial data fields. Extracted as a constant so
+ * `reset` can spread it into a new state object without
+ * duplicating the literals.
+ */
+const INITIAL_STATE = {
+  activeArticleId: null as string | null,
+  activeTopicId: null as string | null,
+  isRunning: false,
+  progress: null as ValidationProgress | null,
+  report: null as Report | null,
+  status: 'idle' as ValidationStoreStatus,
+  error: null as string | null,
+};
+
+// =============================================================================
+//  Marker payload narrowing
+// =============================================================================
+//
+//  The marker handler's payloads arrive as `unknown`. The helpers
+//  below narrow the ones this store cares about. A malformed
+//  payload is silently ignored rather than throwing — a broken
+//  marker must not crash the UI.
+
+/**
+ * Read the `topicId` field from a marker's payload, or return
+ * null. Used by the marker handler to filter out markers that
+ * belong to a different topic.
+ */
+const readTopicId = (payload: unknown): string | null => {
+  if (typeof payload !== 'object' || payload === null) {
+    return null;
+  }
+  const t = (payload as { topicId?: unknown }).topicId;
+  return typeof t === 'string' && t.length > 0 ? t : null;
+};
+
+/**
+ * Narrow a `VALIDATION_PROGRESS` payload into a `ValidationProgress`.
+ * Returns null for a payload missing any of the three required
+ * fields, or with a non-string phase.
+ */
+const narrowValidationProgress = (
+  payload: unknown
+): ValidationProgress | null => {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const p = payload as Record<string, unknown>;
+  const phase = p['phase'];
+  const index = p['index'];
+  const total = p['total'];
+  if (
+    typeof phase !== 'string' ||
+    phase.length === 0 ||
+    typeof index !== 'number' ||
+    typeof total !== 'number'
+  ) {
+    return null;
+  }
+  return { phase, index, total };
+};
+
+// =============================================================================
+//  Store
+// =============================================================================
+
+/**
+ * The validation store. See the file header for its
+ * responsibilities, its subscription model, and the reasoning
+ * behind its design.
+ *
+ * Created without middleware — no `persist` (the store is
+ * transient), no `devtools`, no Immer. Same shape as the sibling
+ * stores.
+ */
+export const useValidationStore = create<ValidationStoreState>(
+  (set, get) => ({
+    // ---- Initial data ----
+    ...INITIAL_STATE,
+
+    // ---- Marker handler ----
+    //
+    // Reacts to the two validation-stage marker types. Every
+    // other marker is ignored — CAPTCHA_REQUIRED, MANUAL_ACTION,
+    // SEARCH_*, EXTRACT_*, WRITER_*, and the task-boundary
+    // markers all belong to other stores.
+    _handleMarker: (event: MarkerEvent): void => {
+      const topicId = readTopicId(event.payload);
+      if (topicId === null) return;
+      if (topicId !== get().activeTopicId) return;
+
+      switch (event.type) {
+        case 'VALIDATION_PROGRESS': {
+          const progress = narrowValidationProgress(event.payload);
+          if (progress !== null) {
+            set({ progress });
+          }
+          return;
+        }
+
+        case 'VALIDATION_DONE': {
+          // The child has exited. Clear the progress panel — the
+          // panel is no longer relevant — but leave `isRunning`
+          // and `status` for the `runValidation` action's
+          // in-flight promise to flip. See the file header's
+          // "Why isRunning is not flipped by the VALIDATION_DONE
+          // marker" section.
+          set({ progress: null });
+          return;
+        }
+
+        default:
+          // TASK_START, TASK_END, CAPTCHA_REQUIRED,
+          // CAPTCHA_SOLVED, MANUAL_ACTION, SEARCH_*, EXTRACT_*,
+          // WRITER_*, and any future marker this store does not
+          // yet know about.
+          return;
+      }
+    },
+
+    // ---- runValidation ----
+    runValidation: async (
+      articleId: string,
+      topicId: string
+    ): Promise<Report | null> => {
+      // Set the active IDs and flip the in-flight flags. The
+      // `report` field is NOT cleared here — a re-run keeps the
+      // previous report visible until the new one lands, so the
+      // user is never staring at an empty tab while the
+      // operation runs.
+      set({
+        activeArticleId: articleId,
+        activeTopicId: topicId,
+        isRunning: true,
+        progress: null,
+        status: 'loading',
+        error: null,
+      });
+
+      try {
+        const result =
+          await window.electronAPI.validation.run(articleId);
+
+        if (result.success && result.data) {
+          const report = result.data;
+          set({
+            report,
+            isRunning: false,
+            progress: null,
+            status: 'idle',
+          });
+          return report;
+        }
+
+        set({
+          isRunning: false,
+          progress: null,
+          status: 'error',
+          error: result.error ?? 'Validation failed.',
+        });
+        return null;
+      } catch (err) {
+        // An IPC rejection is unusual — the preload resolves
+        // business failures into envelopes — but can happen if
+        // the channel is unregistered or the renderer's context
+        // has been torn down.
+        console.error(
+          '[validationStore] runValidation failed:',
+          err
+        );
+        set({
+          isRunning: false,
+          progress: null,
+          status: 'error',
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Unable to reach the validation service.',
+        });
+        return null;
+      }
+    },
+
+    // ---- loadReport ----
+    loadReport: async (
+      articleId: string
+    ): Promise<Report | null> => {
+      // The `loadReport` action does not flip `isRunning`, for
+      // the same reason `topicStore.loadTopics` is the only
+      // action that flips `status: 'loading'` in the topics
+      // store — a read of existing data should not lock the
+      // UI's other controls the way a long-running operation
+      // does. The caller can manage its own loading indicator
+      // if it wants one.
+      try {
+        const result =
+          await window.electronAPI.validation.report(articleId);
+
+        if (result.success && result.data) {
+          set({
+            activeArticleId: articleId,
+            report: result.data,
+            error: null,
+          });
+          return result.data;
+        }
+
+        // A 404 ("no report yet for this article") arrives here
+        // as `{ success: false, error: 'No report found...' }`.
+        // Setting `error` is correct — the caller sees the
+        // message — but the store does not flip `status` to
+        // 'error', because "no report yet" is a legitimate
+        // state for the Report tab's idle view, not a hard
+        // failure.
+        set({
+          error: result.error ?? 'No report found for this article.',
+        });
+        return null;
+      } catch (err) {
+        console.error(
+          '[validationStore] loadReport failed:',
+          err
+        );
+        set({
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Unable to load the report.',
+        });
+        return null;
+      }
+    },
+
+    // ---- setReport ----
+    setReport: (report: Report | null): void => {
+      set({ report });
+    },
+
+    // ---- Clear helpers ----
+    clearError: (): void => {
+      set({ error: null });
+      if (get().status === 'error') {
+        set({ status: 'idle' });
+      }
+    },
+
+    reset: (): void => {
+      set({ ...INITIAL_STATE });
+    },
+  })
+);
+
+// =============================================================================
+//  Marker listener installation
+// =============================================================================
+//
+//  The listener is installed ONCE at module load. See the file
+//  header for why the subscription lives at the store level
+//  rather than per-component.
+//
+//  The guard `typeof window !== 'undefined'` protects against a
+//  non-renderer context (a future test harness that imports the
+//  store to exercise its reducers). When the guard fails, the
+//  store still works as a pure state container — actions write
+//  state, components read state — but the marker stream never
+//  arrives. In the app, the guard always passes.
+
+if (
+  typeof window !== 'undefined' &&
+  typeof window.electronAPI === 'object' &&
+  window.electronAPI !== null
+) {
+  window.electronAPI.on(MARKER_CHANNEL, (raw: unknown) => {
+    // The preload passes the marker through unchanged. Its
+    // runtime shape is `{ type: string, payload: unknown }`.
+    // The type assertion here is safe because the channel is
+    // owned by the main process's services, which emit exactly
+    // that shape for every message.
+    useValidationStore
+      .getState()
+      ._handleMarker(raw as MarkerEvent);
+  });
+}
+
+// =============================================================================
+//  Default export
+// =============================================================================
+
+/**
+ * The hook as the default export, matching the convention used
+ * by every other store in the codebase. Consumers that prefer
+ * the named form use `import { useValidationStore } from ...`;
+ * consumers that prefer the default form use
+ * `import useValidationStore from ...`. Both resolve to the same
+ * hook.
+ */
+export default useValidationStore;
 </file>
 
 <file path="apps/desktop/src/features/writer/components/ArticlePreview.tsx">
