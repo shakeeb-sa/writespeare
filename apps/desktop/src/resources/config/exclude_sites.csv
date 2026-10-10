@@ -1,0 +1,11 @@
+domain,reason
+pinterest.com,Image-only pin pages with no extractable prose.
+instagram.com,Image and caption pages with no article body.
+facebook.com,Login-gated pages that extract to a login prompt.
+linkedin.com,Login-gated pages that extract to a login prompt.
+slideshare.net,Presentation slides whose text extracts as fragments.
+slideserve.com,Presentation slides whose text extracts as fragments.
+scribd.com,Document viewer behind a login-gated canvas.
+academia.edu,Login-gated document repository with no readable body.
+researchgate.net,Login-gated publication listings with no readable body.
+quora.com,Q&A pages whose answer bodies require a login to expand.

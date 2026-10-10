@@ -77,10 +77,6 @@ import type {
   Document,
   LoginRequest,
   LoginResponse,
-  Preset,
-  PresetCreatePayload,
-  PresetName,
-  ProfileName,
   Report,
   Topic,
   TopicCreatePayload,
@@ -88,7 +84,6 @@ import type {
   TopicUpdatePayload,
   User,
   UserRole,
-  UserSetting,
   UserSettingsMap,
 } from '../features/shared/types/index.js';
 

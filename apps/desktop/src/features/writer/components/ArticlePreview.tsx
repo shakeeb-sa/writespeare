@@ -127,9 +127,7 @@ import {
   useState,
 } from 'react';
 import {
-  Check,
   Edit3,
-  Loader2,
   Save,
   Sparkles,
   X,

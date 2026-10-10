@@ -140,6 +140,38 @@ import {
   registerProtocolHandlers,
 } from './protocols.js';
 
+// ---- Feature IPC modules ----
+//
+// One import per feature. Each module exports a `register*IPC()`
+// function that installs the `ipcMain.handle(...)` handlers for
+// the channels that feature serves. The functions are invoked
+// inside the `app.whenReady()` callback below, after Chromium
+// has finished initialising and before the first window is
+// created — the same place `registerProtocolHandlers()` is
+// called, and for the same reason: everything the window will
+// need at first paint must be in place before the window opens.
+//
+// The import order matches the session order in the plan's
+// coding runbook (auth first, then topics, then the seven
+// subsequent features) so that a future reader scanning this
+// block sees the same sequence the runbook uses.
+//
+// Every import specifier uses the `.js` extension, which is the
+// codebase-wide convention for the desktop app's ESM build.
+// TypeScript resolves `.js` back to the `.ts` source at compile
+// time; Node resolves the extension literally at runtime against
+// the compiled `.js` output in `dist/`.
+import { registerAuthIPC } from '../features/auth/ipc/authIPC.js';
+import { registerTopicsIPC } from '../features/topics/ipc/topicsIPC.js';
+import { registerResearchIPC } from '../features/research/ipc/researchIPC.js';
+import { registerDocumentsIPC } from '../features/documents/ipc/documentsIPC.js';
+import { registerWriterIPC } from '../features/writer/ipc/writerIPC.js';
+import { registerValidationIPC } from '../features/validation/ipc/validationIPC.js';
+import { registerExportIPC } from '../features/export/ipc/exportIPC.js';
+import { registerSettingsIPC } from '../features/settings/ipc/settingsIPC.js';
+import { registerAdminIPC } from '../features/admin/ipc/adminIPC.js';
+import { registerAutomationIPC } from '../features/automation/ipc/automationIPC.js';
+
 // ============================================================
 //  Constants
 // ============================================================
@@ -360,38 +392,30 @@ void app.whenReady().then(() => {
 
   // ---- 2. IPC handler registration ----
   //
-  // Feature IPC modules are registered here, one per feature,
-  // as each session of the plan creates them. Each module is
-  // expected to export a `register*IPC()` function whose body
-  // calls `ipcMain.handle(...)` for the channels that feature
-  // serves.
+  // Each feature's IPC module is imported at the top of this
+  // file and its registration function is called here, inside
+  // the `whenReady` callback. The registration installs the
+  // `ipcMain.handle(...)` handlers for every channel that
+  // feature serves, so the renderer's `window.electronAPI.*`
+  // calls resolve. See the imports block at the top of this
+  // file for the full list of the ten functions being called
+  // here.
   //
-  // The lines below are ordered by session number so that a
-  // future reader scanning this block sees the same sequence
-  // the plan's coding order uses. They are commented out until
-  // their target modules exist.
-  //
-  //   import { registerAuthIPC } from '../features/auth/ipc/authIPC.js';              // Session 6
-  //   import { registerTopicsIPC } from '../features/topics/ipc/topicsIPC.js';        // Session 7
-  //   import { registerResearchIPC } from '../features/research/ipc/researchIPC.js';  // Session 10
-  //   import { registerDocumentsIPC } from '../features/documents/ipc/documentsIPC.js'; // Session 12
-  //   import { registerWriterIPC } from '../features/writer/ipc/writerIPC.js';        // Session 14
-  //   import { registerValidationIPC } from '../features/validation/ipc/validationIPC.js'; // Session 16
-  //   import { registerExportIPC } from '../features/export/ipc/exportIPC.js';        // Session 17
-  //   import { registerSettingsIPC } from '../features/settings/ipc/settingsIPC.js';  // Session 18
-  //   import { registerAdminIPC } from '../features/admin/ipc/adminIPC.js';           // Session 19
-  //   import { registerAutomationIPC } from '../features/automation/ipc/automationIPC.js'; // Session 20
-  //
-  //   registerAuthIPC();
-  //   registerTopicsIPC();
-  //   registerResearchIPC();
-  //   registerDocumentsIPC();
-  //   registerWriterIPC();
-  //   registerValidationIPC();
-  //   registerExportIPC();
-  //   registerSettingsIPC();
-  //   registerAdminIPC();
-  //   registerAutomationIPC();
+  // The calls are ordered by session number so that a future
+  // reader scanning this block sees the same sequence the
+  // plan's coding order uses. Order does not affect runtime
+  // behaviour — each function only registers handlers, and no
+  // function depends on another having run first.
+  registerAuthIPC();
+  registerTopicsIPC();
+  registerResearchIPC();
+  registerDocumentsIPC();
+  registerWriterIPC();
+  registerValidationIPC();
+  registerExportIPC();
+  registerSettingsIPC();
+  registerAdminIPC();
+  registerAutomationIPC();
 
   // ---- 3. Create the main window ----
   mainWindow = createWindow();

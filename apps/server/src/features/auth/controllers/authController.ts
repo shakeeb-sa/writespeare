@@ -63,10 +63,10 @@ import type {
  * account), and the terminal middleware formats the response.
  */
 export const login = async (
-  req: AuthRequest<Record<string, string>, unknown, LoginRequest>,
+  req: AuthRequest,
   res: Response<ApiResponse<LoginResponse>>
 ): Promise<void> => {
-  const body = req.body;
+  const body = req.body as LoginRequest;
 
   // ---- Guard: body must be an object ----
   if (!body || typeof body !== 'object' || Array.isArray(body)) {

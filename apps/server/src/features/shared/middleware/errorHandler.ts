@@ -278,10 +278,12 @@ export const errorHandler = (
   // In development, append the stack so the client-side error
   // toast carries enough detail for the developer to locate the
   // bug without tailing the server log. Never in production.
-  if (process.env['NODE_ENV'] === 'development') {
-    body.message = err.stack ?? message;
-  }
-
+if (process.env['NODE_ENV'] === 'development') {
+  body.message =
+    err instanceof Error && err.stack !== undefined
+      ? err.stack
+      : message;
+}
   res.status(statusCode).json(body);
 };
 

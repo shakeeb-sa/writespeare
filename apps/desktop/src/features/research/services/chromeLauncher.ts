@@ -112,7 +112,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { app } from 'electron';
 import treeKill from 'tree-kill';
 
 import { allocatePort, releasePort } from './portAllocator.js';
@@ -377,7 +376,7 @@ export const findChromeExecutable = (): string => {
     // (a shell that is not present, a quoting issue). Instead,
     // iterate the PATH entries from `process.env.PATH` and check
     // each candidate directly.
-    const pathEntries = (process.env.PATH ?? '').split(path.delimiter);
+    const pathEntries = (process.env['PATH'] ?? '').split(path.delimiter);
     for (const binaryName of LINUX_CHROME_BINARIES) {
       for (const entry of pathEntries) {
         if (!entry) continue;

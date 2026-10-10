@@ -1,0 +1,81 @@
+# ============================================================
+#  WriteSpeare — Known paywalled domains
+# ============================================================
+#
+#  A one-domain-per-line list of websites known to serve
+#  their content behind a paywall, a registration wall, or a
+#  meter. The extraction pipeline is expected to read this
+#  file and skip any candidate URL whose hostname matches
+#  an entry.
+#
+#  ── Format ─────────────────────────────────────────────────
+#
+#    * One domain per line.
+#    * Lines beginning with '#' are comments and are ignored.
+#    * Blank lines are ignored.
+#    * Domains are lowercase, without a leading "www." and
+#      without a scheme. A line reading "wsj.com" matches
+#      "https://www.wsj.com/...", "https://wsj.com/...", and
+#      any subdomain such as "https://edition.wsj.com/...".
+#
+#  ── Editing ────────────────────────────────────────────────
+#
+#  This is a starter list, not an authoritative registry.
+#  Add domains your own research surfaces; remove domains
+#  you find are actually readable. The file ships with the
+#  app and is copied to the user's machine on install; a
+#  user edit to the installed copy is preserved across
+#  updates until the user replaces the file themselves.
+#
+#  ── What happens when a match fires ────────────────────────
+#
+#  A candidate URL whose hostname matches an entry is
+#  expected to be dropped from the extraction queue before
+#  the page is fetched. The user sees the URL in the
+#  candidate list with a "paywalled" badge; the extraction
+#  step does not attempt it. The behaviour is a filter, not
+#  a hard rejection — a future setting can disable it if
+#  the user wants to attempt paywalled pages anyway.
+#
+#  ── Honesty about what "paywalled" means ───────────────────
+#
+#  Not every domain below is a hard paywall. Several are
+#  metered — a handful of free articles per month, then a
+#  wall. Others run a soft paywall that some readers see and
+#  others do not. The list's contract is: if a domain is on
+#  it, a fresh extraction request stands a meaningful chance
+#  of hitting a wall. The exact behaviour depends on the
+#  site's policy and on the state of the user's browser
+#  profile, which the pipeline cannot see.
+#
+#  ── Starter entries ────────────────────────────────────────
+#
+#  The domains below are widely known to paywall or meter
+#  their long-form content. The list is not exhaustive and
+#  is not meant to be. It exists so the format has real
+#  examples a new install can see.
+
+wsj.com
+nytimes.com
+washingtonpost.com
+ft.com
+economist.com
+bloomberg.com
+barrons.com
+businessinsider.com
+theatlantic.com
+newyorker.com
+wired.com
+theinformation.com
+semafor.com
+thetimes.co.uk
+telegraph.co.uk
+latimes.com
+seattletimes.com
+bostonglobe.com
+chicagotribune.com
+dallasnews.com
+sfchronicle.com
+scmp.com
+nikkei.com
+straitstimes.com

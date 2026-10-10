@@ -116,7 +116,6 @@ import { useCallback } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
-  FileText,
   Loader2,
   PenLine,
   Sparkles,
