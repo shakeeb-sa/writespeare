@@ -323,17 +323,32 @@ const promptForOutputPath = async (
   // behavior that keeps the user's other app windows responsive
   // while the modal is open. When no window is available, the
   // dialog opens free-standing.
+  //
+  // Electron's `dialog.showSaveDialog` has two overloads: one
+  // that takes only the options object (free-standing dialog),
+  // and one that takes a `BaseWindow` followed by the options
+  // object (window-modal dialog). The two overloads are not
+  // unified under a single signature whose first parameter
+  // accepts `BaseWindow | undefined` — passing `parent ?? undefined`
+  // as the first argument to a single call would not type-check
+  // against either overload. The branch below is what selects
+  // the correct overload for each case.
   const { BrowserWindow } = await import('electron');
   const windows = BrowserWindow.getAllWindows();
   const parent = windows[0];
 
-  const result = await dialog.showSaveDialog(parent ?? undefined, {
+  const dialogOptions = {
     title: config.title,
     defaultPath,
     filters: [
       { name: config.filterLabel, extensions: [config.extension] },
     ],
-  });
+  };
+
+  const result =
+    parent !== undefined
+      ? await dialog.showSaveDialog(parent, dialogOptions)
+      : await dialog.showSaveDialog(dialogOptions);
 
   if (result.canceled || !result.filePath) {
     return null;
@@ -403,18 +418,33 @@ const handleExport = async (
   }
 
   // ---- Open the Save-As dialog ----
-  // The article's title field is not present on the `Article`
-  // type (the backend stores only the content, word count, and
-  // version). The dialog's default filename therefore uses the
-  // topic's title indirectly — via the article's local draft
-  // path, whose stem is the draft number. The fallback string
-  // "article" is the same one `slugifyTitle` uses when it has
-  // nothing to work with, so the naming is consistent.
+  // The `Article` type carries no `title` field — the title is a
+  // property of the parent Topic, and the backend's `Article`
+  // schema stores only the content, word count, and version. The
+  // export IPC therefore has no topic object in scope from which
+  // to read a real title, and it would be wasteful to fetch one
+  // just to construct a filename hint.
+  //
+  // The dialog's default filename is derived from the article's
+  // local draft path stem instead. A draft at
+  // `<topicFolder>/article/draft-01.md` has the stem `draft-01`,
+  // which is a stable, non-empty identifier that appears nowhere
+  // else in the file system. If the stem is empty — a
+  // hand-crafted path that ended in just `.md` — the fallback
+  // "article" is the same string `slugifyTitle` produces when it
+  // has nothing else to work with, so the naming stays
+  // consistent.
+  const draftStem = path.basename(
+    articlePath,
+    path.extname(articlePath)
+  );
+  const defaultNameHint = draftStem.length > 0 ? draftStem : 'article';
+
   let outputPath: string | null;
   try {
     outputPath = await promptForOutputPath(
       dialogConfig,
-      article.title ?? 'article'
+      defaultNameHint
     );
   } catch (err) {
     const message =
