@@ -352,7 +352,7 @@ def write_text_atomic(path: Path, content: str) -> None:
 
 
 def write_json_atomic(path: Path, data: dict) -> None:
-    """
+    r"""
     Write `data` as UTF-8 JSON to `path` atomically.
 
     The serialization uses `indent=2` and `ensure_ascii=False`:

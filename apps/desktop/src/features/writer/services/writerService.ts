@@ -281,6 +281,23 @@ const EXIT_STOPPED = 100;
  *  'skip'" (`EXIT_CAPTCHA_SKIP`). */
 const EXIT_CAPTCHA_SKIP = 101;
 
+
+/**
+ * Whether the current process is running in a development build.
+ *
+ * Used to gate diagnostic logging that is useful to a developer
+ * watching the terminal but noise in a packaged desktop app,
+ * where the end user has no way to see the Electron main
+ * process's stdout. `app.isPackaged` is the authoritative flag —
+ * it is `false` when the app runs from source (`npm run dev`) and
+ * `true` when it runs from a packaged build (`npm run pack`
+ * output).
+ *
+ * The check mirrors the pattern used elsewhere in the codebase —
+ * every diagnostic that is development-only reads this same flag
+ * rather than inventing its own environment check.
+ */
+const isDevelopment = !app.isPackaged;
 // =============================================================================
 //  Helpers
 // =============================================================================
@@ -528,14 +545,50 @@ export const runGenerate = async (
     // Each line that parses as a marker is broadcast to every
     // renderer window. WRITER_DONE markers also update the local
     // path and word count so the exit handler can return them.
+    //
+    // Non-marker lines are Python's own log output — the output of
+    // `core.utils.log_info`, `log_warning`, and `log_error`. They
+    // carry the actual diagnostic message when a writer run fails
+    // (a missing prompt file, an unresolvable chat-input selector,
+    // a DeepSeek navigation error) and would otherwise be silently
+    // dropped, leaving the caller with nothing but "Writer process
+    // exited with code 1" and no explanation. In development they
+    // are forwarded to the Electron main process's terminal; in a
+    // packaged build the terminal is not visible to the end user
+    // and the line is discarded.
     manager.on('stdout', (line: string) => {
       const marker = parseMarkerLine(line);
-      if (marker === null) return;
+      if (marker === null) {
+        if (isDevelopment) {
+          console.log(`[writer:stdout] ${line}`);
+        }
+        return;
+      }
       broadcastMarker(marker);
       if (marker.type === 'WRITER_DONE') {
         const fields = extractWriterDoneFields(marker.payload);
         lastArticlePath = fields.articlePath;
         lastWordCount = fields.wordCount;
+      }
+    });
+
+        // ---- stderr handler ----
+    // Python's stderr carries uncaught tracebacks and any output
+    // the script wrote via `sys.stderr`. The writer script
+    // normally writes only to stdout — all of its logging goes
+    // through `core.utils`, which targets stdout — so a line on
+    // stderr almost always indicates a genuine crash: an
+    // unexpected exception, an import error, a native-library
+    // failure, a `SyntaxError` from a partially-written file.
+    // Every line is forwarded to the Electron main process's
+    // terminal so the traceback is visible during development.
+    // Not forwarded to the renderer: a Python traceback is not
+    // user-facing text, and presenting it in a toast would be
+    // worse than the empty-state message the writer's failure
+    // path already produces.
+    manager.on('stderr', (line: string) => {
+      if (isDevelopment) {
+        console.error(`[writer:stderr] ${line}`);
       }
     });
 

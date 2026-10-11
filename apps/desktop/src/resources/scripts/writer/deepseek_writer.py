@@ -197,12 +197,62 @@ CHAT_URL = "https://chat.deepseek.com/"
 # fresh Chrome process can take several seconds.
 NAVIGATION_TIMEOUT_MS = 30_000
 
-# The stable selector for the chat input. Confirmed three times in
-# the user's recordings: `textarea[aria-label="Message DeepSeek"]`.
-# The `aria-label` attribute is a semantic anchor DeepSeek's team
-# maintains; it does not change on a CSS rebuild the way the
-# hashed class names do.
-TEXTAREA_SELECTOR = 'textarea[aria-label="Message DeepSeek"]'
+# The chat input's accessible name. The Chrome DevTools Recorder
+# captures the element's accessible name — the string screen
+# readers and automation tools use to identify it — which is
+# "Message DeepSeek". This name is what the resolver below
+# matches against, not a specific attribute.
+CHAT_INPUT_ACCESSIBLE_NAME = "Message DeepSeek"
+
+# The fallback chain for locating the chat input, in priority
+# order. The first entry that resolves to a visible element on
+# the page wins.
+#
+# Priority rationale:
+#
+#   1. Role + accessible name. This is the recording-confirmed
+#      anchor. Playwright's `get_by_role("textbox", name=...)`
+#      matches an element by its accessible name regardless of
+#      whether that name comes from an `aria-label` attribute,
+#      a `placeholder`, an `aria-labelledby` reference, or a
+#      visible `<label>`. This is the primary selector and it
+#      should match on any current DeepSeek markup.
+#
+#   2. `textarea[aria-label="..."]`. The original selector,
+#      retained as a fallback in case DeepSeek's team adds an
+#      explicit `aria-label` to match the accessible name.
+#
+#   3. `textarea[placeholder*="Message"]`. A placeholder-
+#      substring fallback for a rename of the placeholder's
+#      exact text (e.g. "Message DeepSeek" → "Message...") .
+#
+#   4. `textarea[placeholder*="Ask"]`. A second placeholder-
+#      substring fallback for the other common chat-input
+#      wording.
+#
+#   5. Bare `textarea`. Last-ditch: the first visible textarea
+#      on the page. Reached only when every named selector
+#      missed, which would mean DeepSeek renamed the input in
+#      a way none of the above anticipated.
+#
+# Each entry is a callable that takes the `Page` and returns a
+# Playwright `Locator`. The resolver invokes them in order until
+# one yields a visible element.
+CHAT_INPUT_SELECTOR_CHAIN = (
+    lambda page: page.get_by_role(
+        "textbox", name=CHAT_INPUT_ACCESSIBLE_NAME
+    ),
+    lambda page: page.locator(
+        'textarea[aria-label="Message DeepSeek"]'
+    ),
+    lambda page: page.locator(
+        'textarea[placeholder*="Message"]'
+    ),
+    lambda page: page.locator(
+        'textarea[placeholder*="Ask"]'
+    ),
+    lambda page: page.locator("textarea"),
+)
 
 # The stable selector for a completed response's markdown body.
 # See "Decision 2" in the module docstring for why this is a
@@ -232,6 +282,52 @@ RESPONSE_APPEAR_TIMEOUT_SECONDS = 90
 RESPONSE_STABLE_CHECKS_REQUIRED = 3
 RESPONSE_STABLE_POLL_SECONDS = 1.0
 
+# =============================================================================
+#  Internal: chat-input resolver
+# =============================================================================
+
+def _resolve_chat_input(page: Page):
+    """
+    Return a Playwright `Locator` for the chat input, using the
+    selector chain declared in `CHAT_INPUT_SELECTOR_CHAIN`.
+
+    Each entry in the chain is tried in order. The first entry
+    whose locator resolves to at least one visible element is
+    returned. If every entry fails, `None` is returned.
+
+    The function never raises. A chain entry that throws — a
+    selector syntax error, a page that has navigated away
+    mid-probe — is caught and the next entry is tried. This is
+    what lets the resolver survive a page whose DOM is in
+    transition: an entry that queries a temporarily-absent
+    element raises nothing (Playwright's `.count()` returns 0 on
+    a missing locator), but a `get_by_role` call against a
+    malformed accessibility tree can, and that failure should not
+    abort the whole resolution.
+
+    Returns:
+        A `Locator` for the first visible match, or `None`.
+    """
+    for idx, entry in enumerate(CHAT_INPUT_SELECTOR_CHAIN):
+        try:
+            locator = entry(page)
+            count = locator.count()
+            if count == 0:
+                continue
+            first = locator.first
+            if first.is_visible():
+                log_info(
+                    f"Resolved chat input via selector "
+                    f"#{idx + 1} of {len(CHAT_INPUT_SELECTOR_CHAIN)}."
+                )
+                return first
+        except Exception as exc:
+            log_warning(
+                f"Chat-input selector #{idx + 1} failed: {exc}"
+            )
+            continue
+    return None
+
 
 # =============================================================================
 #  Internal: login-wall detection
@@ -244,9 +340,22 @@ def _detect_login_wall(page: Page) -> bool:
 
     Detection signals, any of which is sufficient:
 
-      * The current URL contains "login" or "signin".
-      * The page body contains the phrase "sign in to deepseek"
-        or "log in to continue".
+      * The current URL contains any common login-page fragment.
+        DeepSeek's login page lives at `chat.deepseek.com/sign_in`,
+        and a naïve `"signin"` substring match against the URL is
+        NOT sufficient: the string is `sign_in` (with an
+        underscore), and `"signin" in "…/sign_in"` evaluates to
+        False.
+
+      * The page body contains a phrase DeepSeek's login screen
+        uses. The list covers the wording that has shipped on
+        DeepSeek's login page across recent versions.
+
+      * Neither of the above matched, but the chat textarea is
+        absent while a "Log in" button is present. This is the
+        catch-all for a login page whose copy has drifted from
+        every phrase above — a UI redesign that renames the
+        heading but keeps the button label.
 
     The check runs immediately after navigation; if it fires, the
     caller invokes `manual_action_required` so the user can log
@@ -258,14 +367,47 @@ def _detect_login_wall(page: Page) -> bool:
     """
     try:
         url = (page.url or "").lower()
-        if "login" in url or "signin" in url:
-            return True
+        for fragment in ("login", "signin", "sign_in", "sign-in"):
+            if fragment in url:
+                return True
     except Exception:
         pass
 
     try:
         body = (page.inner_text("body") or "").lower()
-        if "sign in to deepseek" in body or "log in to continue" in body:
+        for phrase in (
+            "sign in to deepseek",
+            "log in to continue",
+            "welcome back",
+            "continue with google",
+            "continue with apple",
+            "continue with email",
+        ):
+            if phrase in body:
+                return True
+    except Exception:
+        pass
+
+    # ---- Fallback: textarea absent + a login button present ----
+    # Reached only when the URL and the body copy both failed to
+    # identify the page. The two-part test — no chat textarea AND
+    # a visible login affordance — is specific enough that a
+    # normal chat page (which HAS a textarea) can never trigger it.
+    #
+    # The textarea-absence check goes through the same selector
+    # chain the main flow uses. If any entry in the chain resolves
+    # to a visible textarea, the page is a chat page, not a login
+    # wall. This is what keeps the fallback consistent with
+    # `_resolve_chat_input` — a future chain addition is picked up
+    # here automatically.
+    try:
+        resolved = _resolve_chat_input(page)
+        if resolved is not None:
+            return False
+        login_btn = page.get_by_role(
+            "button", name="Log in", exact=False
+        )
+        if login_btn.count() > 0 and login_btn.first.is_visible():
             return True
     except Exception:
         pass
@@ -281,13 +423,47 @@ def _write_clipboard(page: Page, text: str) -> bool:
     """
     Write `text` to the OS clipboard via the page's clipboard API.
 
-    Returns True on success, False on any failure. The failure mode
-    is almost always a missing clipboard permission on the browser
-    context; the caller (`_paste_content`) grants the permission
-    before calling this, so a False return here indicates an
-    unexpected state and the caller logs it.
+    Returns True on success, False on any failure.
+
+    Two failure modes are checked, in order:
+
+      1. `navigator.clipboard` or `navigator.clipboard.writeText`
+         is undefined on the page. This happens on an insecure
+         origin and — importantly for the CDP-attached Chrome
+         case — on some browser configurations where the
+         clipboard API is gated behind a permission that
+         `BrowserContext.grant_permissions` does not reach.
+         A page-level availability probe catches this case
+         cleanly and avoids the noisy exception that a direct
+         `evaluate` call would produce.
+
+      2. The `writeText` call itself rejects — a permission
+         denial, a page that has lost focus, a browser that has
+         revoked the API mid-session. The exception is caught
+         and logged at warning level.
+
+    A False return is not fatal: the caller (`_paste_content`)
+    falls back to typing the content directly into the chat
+    input, which does not depend on the clipboard at all. See
+    that function for the full fallback path.
     """
     try:
+        # The availability probe. `navigator.clipboard` is
+        # undefined on an insecure origin, and `writeText` is
+        # absent on a handful of hardened browser builds. One
+        # `evaluate` call settles both questions.
+        usable = page.evaluate(
+            "() => Boolean(navigator.clipboard && "
+            "navigator.clipboard.writeText)"
+        )
+        if not usable:
+            log_warning(
+                "navigator.clipboard.writeText is not available "
+                "in this page context; the paste step will fall "
+                "back to direct text entry."
+            )
+            return False
+
         # `json.dumps` escapes quotes, backslashes, and newlines so
         # the string is safe to embed as a JavaScript literal.
         page.evaluate(
@@ -323,68 +499,126 @@ def _paste_content(
     index: int,
 ) -> bool:
     """
-    Paste `content` into the chat input, relying on DeepSeek's own
-    paste handler to convert it into an attachment chip.
+    Place `content` into the chat input, preferring DeepSeek's
+    paste-to-chip handler but falling back to direct typing when
+    the clipboard is unavailable.
 
-    Returns True if the paste appears to have produced a chip (the
-    textarea stayed empty), False if the content landed in the
-    textarea as text (DeepSeek decided not to convert this paste).
+    Returns True when the content reached the chat input by any
+    means — a chip, a paste-as-text, or a direct-typed fallback.
+    Returns False only when every avenue failed.
 
-    The False path is not an immediate failure: the content is
-    still in the chat input and will be submitted with the prompt.
-    It just means the article page will be presented to DeepSeek
-    as raw text rather than as an attachment. This is
-    functionally equivalent from the model's perspective — the
-    model reads the same content either way — so the writer logs
-    a debug line and continues.
+    Three strategies, tried in order:
+
+      1. Clipboard write + Ctrl+V. This is the intended path —
+         DeepSeek's paste handler intercepts a long paste and
+         converts it to an attachment chip. This is what the
+         plan's user journey describes.
+
+      2. Direct text entry via `textarea.fill(...)`. Used when
+         the clipboard is unavailable — on a CDP-attached Chrome
+         context the clipboard API sometimes rejects even after
+         `grant_permissions`. The content still reaches DeepSeek
+         as message body text; only the chip presentation is
+         lost, and the model reads the same content either way.
+
+      3. Append-with-separator when the textarea already holds
+         content from a previous direct-typed doc. Without this,
+         a second doc would overwrite the first, so a batch
+         where every doc takes the fallback path would end with
+         only the last doc visible.
+
+    The False path is now the rare case where even direct typing
+    failed — a textarea that has disappeared from the DOM, a page
+    that has navigated away. The caller logs a warning and moves
+    on; a single un-pasteable doc does not abort the batch.
     """
-    if not _write_clipboard(page, content):
-        return False
+    # ---- Strategy 1: clipboard + paste keystroke ----
+    if _write_clipboard(page, content):
+        # Focus the textarea so the paste event targets it.
+        try:
+            textarea.click()
+        except Exception as exc:
+            log_warning(f"Could not focus the chat input: {exc}")
+        else:
+            # Small pause to let the focus settle before the paste.
+            time.sleep(0.2)
 
-    # Focus the textarea so the paste event targets it.
+            # Fire the paste. The `Control+V` sequence is the
+            # Windows/Linux form; macOS uses `Meta+V`. Playwright's
+            # modifier names are platform-specific, so the check
+            # picks the right one.
+            modifier = (
+                "Meta" if sys.platform == "darwin" else "Control"
+            )
+            try:
+                page.keyboard.press(f"{modifier}+V")
+                time.sleep(PASTE_SETTLE_SECONDS)
+
+                # An empty textarea after a long paste is the chip
+                # path — DeepSeek intercepted the paste and created
+                # an attachment. A non-empty textarea means the
+                # content went in as text. Either way, the content
+                # reached DeepSeek and the strategy succeeded.
+                try:
+                    textarea_value = textarea.input_value() or ""
+                except Exception:
+                    # The textarea's value cannot be read (the
+                    # paste may have caused a DOM replacement).
+                    # Treat as success — the paste landed.
+                    return True
+
+                if textarea_value.strip() == "":
+                    log_info(
+                        f"Pasted source {index} as an attachment chip."
+                    )
+                else:
+                    log_info(
+                        f"Source {index} pasted as text (DeepSeek "
+                        f"did not convert it to a chip)."
+                    )
+                return True
+            except Exception as exc:
+                log_warning(f"Paste keystroke failed: {exc}")
+
+    # ---- Strategy 2 & 3: direct text entry ----
+    # Reached when the clipboard path could not run or the paste
+    # keystroke failed. Direct typing bypasses the clipboard and
+    # the OS paste handler entirely — it sets the textarea's value
+    # via the DOM. DeepSeek's React layer sees the input event and
+    # treats the text as message body content. No chip is created,
+    # but the model still reads the content.
+    log_warning(
+        f"Clipboard paste unavailable; typing source {index} "
+        f"directly into the chat input."
+    )
+
     try:
         textarea.click()
     except Exception as exc:
         log_warning(f"Could not focus the chat input: {exc}")
         return False
 
-    # Small pause to let the focus settle before the paste.
-    time.sleep(0.2)
-
-    # Fire the paste. The `Control+V` sequence is the Windows/Linux
-    # form; macOS uses `Meta+V`. Playwright's modifier names are
-    # platform-specific, so the check picks the right one.
-    modifier = "Meta" if sys.platform == "darwin" else "Control"
+    # Preserve any content already present. A previous direct-typed
+    # doc left its text in the textarea; a chip-pasted doc left
+    # nothing. The empty-check distinguishes the two cases so the
+    # separator only appears between two direct-typed docs.
     try:
-        page.keyboard.press(f"{modifier}+V")
-    except Exception as exc:
-        log_warning(f"Could not send paste keystroke: {exc}")
-        return False
-
-    # Let DeepSeek's paste handler decide.
-    time.sleep(PASTE_SETTLE_SECONDS)
-
-    # Check whether the textarea stayed empty. An empty textarea
-    # after a long paste is the chip path — DeepSeek intercepted
-    # the paste and created an attachment. A non-empty textarea
-    # means the content went in as text.
-    try:
-        textarea_value = textarea.input_value() or ""
+        existing = textarea.input_value() or ""
     except Exception:
-        # The textarea's value cannot be read (the paste may have
-        # caused a DOM replacement). Treat as success — the paste
-        # landed somewhere in the chat, which is what matters.
-        return True
+        existing = ""
 
-    if textarea_value.strip() == "":
-        log_info(f"Pasted source {index} as an attachment chip.")
-        return True
+    separator = "\n\n---\n\n" if existing.strip() else ""
 
-    log_info(
-        f"Pasted source {index} as text (DeepSeek did not "
-        f"convert it to a chip). The prompt will follow it."
-    )
-    return False
+    try:
+        textarea.fill(existing + separator + content)
+        time.sleep(0.3)
+        log_info(
+            f"Typed source {index} directly into the chat input."
+        )
+        return True
+    except Exception as exc:
+        log_warning(f"Direct text entry failed: {exc}")
+        return False
 
 
 # =============================================================================
@@ -680,7 +914,15 @@ def run_write(
     # If the user's session has expired, DeepSeek redirects to a
     # login page rather than the chat. Block for the user to log
     # back in once.
-    time.sleep(1.5)
+    #
+    # The initial settle time is 2.5 seconds rather than 1.5.
+    # DeepSeek's SPA takes a moment to decide whether the session
+    # cookie is valid and either render the chat or navigate to
+    # `/sign_in`; sampling at 1.5s occasionally catches the page
+    # mid-redirect, when neither the chat textarea nor the login
+    # button is yet present. The longer wait eliminates that
+    # race without adding meaningful latency to the normal path.
+    time.sleep(2.5)
     if _detect_login_wall(page):
         log_warning(
             "DeepSeek is showing a login wall — waiting for the "
@@ -690,19 +932,99 @@ def run_write(
             site="deepseek",
             step="login",
             prompt=(
-                "DeepSeek needs you to sign in again. Log in in the "
-                "Chrome window, then click Continue."
+                "DeepSeek needs you to sign in. Log in in the "
+                "Chrome window, wait for the chat to load, then "
+                "click Continue."
             ),
         )
-        # After Continue, the page should now be the chat.
-        time.sleep(2.0)
+
+        # After Continue, give the SPA a moment to transition from
+        # the login page to the chat. Then re-check the wall. If
+        # it is still present, the user clicked Continue without
+        # actually completing the sign-in — a diagnostic message
+        # here is far more useful to them than the generic
+        # "Chat input did not appear" failure that would
+        # otherwise follow.
+        time.sleep(3.0)
+        if _detect_login_wall(page):
+            log_error(
+                "Login wall still present after Continue. The "
+                "DeepSeek sign-in was not completed — please log "
+                "in in the Chrome window and click Continue only "
+                "after the chat interface is visible."
+            )
+            emit_marker(
+                MARKER_WRITER_DONE,
+                {
+                    "topicId": topic_id,
+                    "articlePath": "",
+                    "wordCount": 0,
+                },
+            )
+            return 1
 
     # ---- Wait for the chat input ----
-    try:
-        textarea = page.locator(TEXTAREA_SELECTOR).first
-        textarea.wait_for(timeout=15_000)
-    except Exception as exc:
-        log_error(f"Chat input did not appear: {exc}")
+    # The resolver tries the full selector chain immediately. If
+    # none of the entries match on the first probe, we poll the
+    # resolver every half-second for twenty seconds. The polling
+    # is required because DeepSeek's composer renders
+    # asynchronously — the initial probe can run before the
+    # textarea has mounted. A single `wait_for` on one selector
+    # would fail immediately; the polling form gives the chain a
+    # full twenty seconds to find its match on each render tick.
+    #
+    # Twenty seconds rather than fifteen: DeepSeek's chat
+    # interface occasionally takes longer than fifteen to render
+    # the composer after the initial bundle loads, especially on
+    # a cold Chrome start where the V8 JIT has not yet warmed up.
+    textarea = None
+    deadline = time.time() + 20.0
+    while time.time() < deadline:
+        textarea = _resolve_chat_input(page)
+        if textarea is not None:
+            break
+        time.sleep(0.5)
+
+    if textarea is None:
+        # Diagnostic before the failure exits the process. The
+        # current URL tells us whether DeepSeek navigated away
+        # from the chat (a login wall, an interstitial, a
+        # redirect we did not anticipate), the body snippet shows
+        # what the page actually rendered, and the DOM dump shows
+        # exactly how many textarea and contenteditable elements
+        # are on the page. All three are invaluable when
+        # debugging from a log that otherwise only says "Chat
+        # input did not appear".
+        try:
+            current_url = page.url
+        except Exception:
+            current_url = "(unavailable)"
+        try:
+            body_snippet = (page.inner_text("body") or "")[:500]
+        except Exception:
+            body_snippet = "(unavailable)"
+        try:
+            textarea_count = page.locator("textarea").count()
+        except Exception:
+            textarea_count = -1
+        try:
+            contenteditable_count = page.locator(
+                '[contenteditable="true"]'
+            ).count()
+        except Exception:
+            contenteditable_count = -1
+
+        log_error(
+            f"Chat input did not appear within 20s. Every "
+            f"selector in the chain failed."
+        )
+        log_error(f"Current page URL: {current_url}")
+        log_error(f"Page body snippet: {body_snippet!r}")
+        log_error(
+            f"DOM counts — <textarea>: {textarea_count}, "
+            f"[contenteditable]: {contenteditable_count}"
+        )
+
         emit_marker(
             MARKER_WRITER_DONE,
             {"topicId": topic_id, "articlePath": "", "wordCount": 0},
@@ -722,9 +1044,26 @@ def run_write(
             new_chat.click(timeout=3_000)
             log_info("Started a new DeepSeek chat.")
             time.sleep(1.0)
-            # Re-query the textarea since the DOM may have shifted.
-            textarea = page.locator(TEXTAREA_SELECTOR).first
-            textarea.wait_for(timeout=10_000)
+            # Re-resolve the chat input since the DOM may have
+            # shifted after the new-chat transition. The resolver
+            # walks the same selector chain; the same polling
+            # pattern as the initial resolution is used, with a
+            # shorter 10-second ceiling because the page is
+            # already loaded and the composer only needs to
+            # re-mount, not bootstrap.
+            resolved = None
+            recheck_deadline = time.time() + 10.0
+            while time.time() < recheck_deadline:
+                resolved = _resolve_chat_input(page)
+                if resolved is not None:
+                    break
+                time.sleep(0.5)
+            if resolved is not None:
+                textarea = resolved
+            # If resolution failed, keep the previous `textarea`
+            # reference — the pre-existing composer is likely
+            # still in the DOM, and the next step (`_paste_content`)
+            # will surface a clear per-doc failure if it is not.
     except Exception:
         # Not fatal — proceeding in the current chat is fine.
         pass
@@ -808,11 +1147,23 @@ def run_write(
     log_info("Typing the prompt.")
     try:
         textarea.click()
-        # Clear any stray content (defensive — a chip paste
-        # should leave the textarea empty, but a bug in a
-        # previous step might have left something).
-        textarea.fill("")
-        textarea.fill(rendered_prompt)
+
+        # Read whatever is currently in the textarea. If every
+        # doc became a chip (the normal path), the textarea is
+        # empty and the prompt is typed on a clean slate. If any
+        # doc took the direct-typing fallback, its content is in
+        # the textarea and must be preserved — the prompt is the
+        # final instruction and is appended BELOW the source
+        # material, not on top of it. Clearing the textarea here
+        # unconditionally would discard the fallback content and
+        # send DeepSeek a prompt with no sources.
+        try:
+            existing = textarea.input_value() or ""
+        except Exception:
+            existing = ""
+
+        separator = "\n\n---\n\n" if existing.strip() else ""
+        textarea.fill(existing + separator + rendered_prompt)
         time.sleep(0.3)
     except Exception as exc:
         log_error(f"Could not type the prompt: {exc}")

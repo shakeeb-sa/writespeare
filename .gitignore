@@ -10,7 +10,6 @@ yarn-error.log*
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
-*.md
 # ============================================================
 #  Python
 # ============================================================
@@ -263,7 +262,6 @@ vite.config.js.map
 vite.config.d.ts
 *.d.ts
 
-*.md
 
 python/
 lib/
