@@ -2,21 +2,44 @@
  * DocumentPreview — the Markdown preview modal for the documents
  * feature.
  *
- * Reads the `selectedDocument` field from the documents store and
- * renders the selected doc as a modal when that field is non-null.
- * The modal is closed by calling the store's `selectDocument(null)`
- * action — the same field that drives its visibility, so the
- * component is fully controlled by the store.
+ * Reads the topic's per-topic `selectedDocument` slot from the
+ * documents store and renders the selected doc as a modal when
+ * that slot is non-null. The modal is closed by calling the
+ * store's `selectDocument(topicId, null)` action — the same
+ * per-topic slot that drives its visibility, so the component is
+ * fully controlled by the store.
+ *
+ * ── The `topicId` prop (PR-1) ──────────────────────────────────
+ *
+ *   The component receives a `topicId` prop from the sibling
+ *   `DocumentList.tsx`, which mounts it as
+ *   `<DocumentPreview topicId={topic._id} />`. The prop is
+ *   forwarded to `useDocuments(topicId)` so the preview reads
+ *   the same per-topic slot the list does. Without it, the
+ *   preview would read a different topic's slot (or `undefined`)
+ *   and the modal's contents would not match the list's
+ *   selection.
+ *
+ *   This is the PR-1 refactor's consequence for this component:
+ *   Q4.3's "refactor all feature stores to key by topicId in the
+ *   same pass" changed `useDocuments` from a zero-argument hook
+ *   reading a single store-wide slot into a topic-ID-argument
+ *   hook reading per-topic slots. Every call site must now supply
+ *   the topic ID, and this component's call site is the mount
+ *   inside `DocumentList.tsx`.
  *
  * ── The modal-ownership arrangement ────────────────────────────
  *
  *   The preview is mounted by `DocumentList.tsx` — the list owns
  *   the mount, the store owns the open/closed state, and the
- *   preview component reads its state from the store rather than
- *   from a prop. The consequence is that the list and the preview
- *   never have to thread a `selected` prop between them: the list
- *   calls `selectDocument(doc)` to open the preview, and the
- *   preview calls `selectDocument(null)` to close itself.
+ *   preview component reads that state from the store rather than
+ *   from a `selected` prop. The `topicId` prop is the one
+ *   exception: it is the identifier the store needs to know which
+ *   per-topic slot to read. The consequence is that the list and
+ *   the preview never have to thread a `selected` prop between
+ *   them: the list calls `selectDocument(topicId, doc)` to open
+ *   the preview, and the preview calls `selectDocument(topicId,
+ *   null)` to close itself.
  *
  *   See `DocumentList.tsx`'s file header for the fuller reasoning
  *   on why this arrangement is preferred over a per-component
@@ -144,17 +167,22 @@ import type { Document } from '../../shared/types/index.js';
 // ============================================================
 
 /**
- * The props accepted by `DocumentPreview`. Currently empty — the
- * component reads everything it needs from the documents store
- * via `useDocuments`, and the store's `selectedDocument` field is
- * what drives its visibility. The interface is declared anyway so
- * a future addition (a `format` prop to switch between rendered
- * Markdown and raw source view, a `readOnly` flag, a sizing hint)
- * has a named, exported home.
+ * The props accepted by `DocumentPreview`.
+ *
+ * The component takes a single `topicId` prop — the ID of the
+ * topic whose per-topic `selectedDocument` slot this preview
+ * renders. The prop is forwarded to `useDocuments(topicId)` so
+ * the preview reads the same slot the sibling `DocumentList`
+ * writes to. See the file header's "`topicId` prop (PR-1)"
+ * section for the full reasoning.
+ *
+ * The interface is otherwise empty; the only other input the
+ * component accepts is the store state it reads through the
+ * hook.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface DocumentPreviewProps {
-  // Reserved for future additions. See the interface docstring.
+  /** The topic whose selected document this preview renders. */
+  topicId: string;
 }
 
 // ============================================================
@@ -258,10 +286,8 @@ const DocumentMeta = ({ document }: DocumentMetaProps) => {
  * responsibilities, the cached-document trick, and the reasoning
  * behind the markdown rendering choices.
  */
-export const DocumentPreview = (
-  _props: DocumentPreviewProps = {}
-) => {
-  const { selectedDocument, selectDocument } = useDocuments();
+export const DocumentPreview = ({ topicId }: DocumentPreviewProps) => {
+  const { selectedDocument, selectDocument } = useDocuments(topicId);
 
   // The last non-null selected document. Used as a fallback while
   // the modal plays its exit animation. See the file header's
@@ -299,8 +325,8 @@ export const DocumentPreview = (
       : 'Document preview';
 
   const handleClose = useCallback((): void => {
-    selectDocument(null);
-  }, [selectDocument]);
+    selectDocument(topicId, null);
+  }, [selectDocument, topicId]);
 
   // ---- Markdown component overrides ----
   //

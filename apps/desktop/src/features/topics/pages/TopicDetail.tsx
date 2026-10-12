@@ -105,6 +105,32 @@
  *   Unconditionally calling `loadTopic(id)` on every mount would
  *   produce a redundant network round trip on every navigation
  *   from the Topics list, which is the common case.
+ * 
+  *
+ * Load on open — the per-topic state that follows the topic:
+ *
+ *   When the topic becomes available, the page also loads the
+ *   per-topic state that other features cache independently:
+ *   the writer's latest article for this topic, and the
+ *   research feature's saved search candidates. The two loads
+ *   are triggered by a dedicated effect in the component body,
+ *   keyed on the same route-param value the `loadTopic` effect
+ *   uses for its guard.
+ *
+ *   The loads are best-effort and self-guarding: the writer
+ *   hook's `loadLatest` and the research hook's `loadCandidates`
+ *   both skip their fetch when the topic's per-topic slot is
+ *   already populated. The effect therefore fires on every
+ *   mount and every route-param change, and the guards inside
+ *   the actions handle the "already loaded" case cheaply —
+ *   a returning visit to a topic renders with the article and
+ *   the candidates already in place, rather than showing empty
+ *   states until the user takes an action.
+ *
+ *   This is the "fetch on first open" behaviour from Q4.2. The
+ *   corresponding per-topic store shape — `articlesByTopic`
+ *   and `candidatesByTopic` — is what makes the load keyed by
+ *   topic ID rather than scoped to a single "active" slot.
  *
  * Four render branches:
  *
@@ -147,7 +173,16 @@
  *     ArticlePreview    — Session 14, step 110
  *     ValidationReport  — Session 16, step 124
  *
- *   Until those files exist, the imports below produce six
+ *   In addition to the six stage components, the page also
+ *   forward-references one component from the export feature:
+ *
+ *     DownloadBundleModal — PR-5, "Download bundle"
+ *
+ *   The DownloadBundleModal is mounted at the page level (as a
+ *   sibling of the header and the main element) and its import
+ *   is the seventh forward reference this file carries.
+ *
+ *   Until those files exist, the imports below produce seven
  *   `TS2307` errors. This is the same forward-reference shape
  *   that Sessions 4, 5, and 6 have already established — see
  *   `App.tsx`, `Layout.tsx`, `Sidebar.tsx`, and the various
@@ -166,6 +201,24 @@
  *   change lands in this file at the same time as the stage
  *   component, keeping the interface in sync.
  *
+ *  *
+ * Download bundle:
+ *
+ *   The page header carries a "Download bundle" button that
+ *   opens the `DownloadBundleModal` — the topic-level export
+ *   affordance introduced by PR-5. This is distinct from the
+ *   article-level `ExportMenu` that `ArticlePreview` renders
+ *   (see "What this page does NOT do" below): the bundle
+ *   covers the topic's entire output — article, sources,
+ *   report, prompt used, preset used, and metadata — while
+ *   the `ExportMenu` exports the article alone in one of the
+ *   supported formats.
+ *
+ *   The modal is mounted at the page level, as a sibling of
+ *   the header and the main element. This component tracks
+ *   only whether the modal is currently open; the modal itself
+ *   owns the checkbox state, the destination choice, and the
+ *   IPC call that assembles the ZIP.
  * What this page does NOT do:
  *
  *   - It does not run the search, extraction, writer, validation,
@@ -211,6 +264,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
+  Download,
   FileSearch,
   FileText,
   Loader2,
@@ -220,6 +274,8 @@ import {
 } from 'lucide-react';
 
 import { useTopics } from '../hooks/useTopics.js';
+import { useWriter } from '../../writer/hooks/useWriter.js';
+import { useResearch } from '../../research/hooks/useResearch.js';
 
 // ============================================================
 //  Forward references — stage components
@@ -240,6 +296,7 @@ import DocumentList from '../../documents/components/DocumentList.js'; // Sessio
 import WriterProgress from '../../writer/components/WriterProgress.js'; // Session 14, step 108
 import ArticlePreview from '../../writer/components/ArticlePreview.js'; // Session 14, step 110
 import ValidationReport from '../../validation/components/ValidationReport.js'; // Session 16, step 124
+import DownloadBundleModal from '../../export/components/DownloadBundleModal.js'; // PR-5
 
 import type { Topic, TopicStatus } from '../../shared/types/index.js';
 
@@ -556,12 +613,33 @@ export const TopicDetail = (_props: TopicDetailProps = {}) => {
    */
   const topicId = params['id'];
 
+  // ---- Load-on-open hooks (PR-1, Q4.2) ----
+  // Two hooks whose per-topic "first open" loading is triggered
+  // by the effect further down. Both hooks take the topic's ID
+  // as their required first argument (Q4.3). The `?? ''` fallback
+  // is used because the route param is typed `string | undefined`
+  // — the hooks must be called unconditionally, so an empty
+  // string stands in when the route has no `:id` segment. In
+  // that state the effect below skips its work via the
+  // `if (!topicId)` guard, so the fallback value is never used
+  // to fetch. Only the two `load*` actions are destructured —
+  // the component reads no writer or research data.
+  const { loadLatest } = useWriter(topicId ?? '');
+  const { loadCandidates } = useResearch(topicId ?? '');
+
   /**
    * The user's tab selection, or `null` when the user has not yet
    * clicked a tab on this visit. See the file header for why the
    * distinction between `null` and a concrete value matters.
    */
   const [activeTab, setActiveTab] = useState<TabId | null>(null);
+
+  // ---- Download-bundle modal (PR-5) ----
+  // Controls the visibility of the DownloadBundleModal. The
+  // modal itself owns the checkbox state, the destination
+  // choice, and the IPC call; this component only tracks
+  // whether the modal is currently mounted.
+  const [bundleModalOpen, setBundleModalOpen] = useState(false);
 
   // ---- Load the topic if the store does not already hold it ----
   //
@@ -588,6 +666,40 @@ export const TopicDetail = (_props: TopicDetailProps = {}) => {
     }
     void loadTopic(topicId);
   }, [topicId, activeTopic, loadTopic]);
+
+  
+  // ---- Load per-topic writer and research state on first open ----
+  //
+  // Q4.2's "fetch on first open" behaviour: when the user opens
+  // a topic, the page loads the topic's latest article (writer
+  // hook's `loadLatest`) and its saved search candidates
+  // (research hook's `loadCandidates`). Both actions have their
+  // own "already loaded" guard inside the store — they skip the
+  // fetch if the topic's slot is already populated — so the
+  // effect fires on every mount and on every route-param change
+  // without producing redundant network round trips.
+  //
+  // The effect is separate from the `loadTopic` effect above
+  // because the two have different dependencies and different
+  // responsibilities: `loadTopic` fetches the topic's own record
+  // from the backend, while this effect fetches the per-topic
+  // state that the writer and research stores cache
+  // independently.
+  //
+  // The two `load*` references are stable Zustand action
+  // references — they are the same function object across every
+  // render — so the dependency array's only effective trigger
+  // is `topicId`. A change to the route param fires the effect
+  // once; a re-render caused by unrelated state changes does
+  // not re-run it.
+  useEffect(() => {
+    if (!topicId) {
+      return;
+    }
+    void loadLatest(topicId);
+    void loadCandidates(topicId);
+  }, [topicId, loadLatest, loadCandidates]);
+
 
   // ---- Back navigation ----
   //
@@ -772,6 +884,25 @@ export const TopicDetail = (_props: TopicDetailProps = {}) => {
               <span>{activeTopic.wordCount} words target</span>
             </div>
           </div>
+
+          {/* ---- Download bundle action (PR-5) ---- */}
+          {/* Sits on the header's right side, aligned with the
+              title block. The modal this button opens is mounted
+              at the bottom of the page (see the JSX below the
+              <main> element). */}
+          <button
+            type="button"
+            onClick={() => setBundleModalOpen(true)}
+            className={
+              'shrink-0 inline-flex items-center gap-2 ' +
+              'rounded-lg bg-primary px-4 py-2 text-sm ' +
+              'font-medium text-white transition-colors ' +
+              'hover:bg-primary-dark focus-visible:outline-none'
+            }
+          >
+            <Download size={16} aria-hidden="true" />
+            <span>Download bundle</span>
+          </button>
         </div>
 
         {/* ---- Tab bar ---- */}
@@ -808,6 +939,20 @@ export const TopicDetail = (_props: TopicDetailProps = {}) => {
           {renderTabContent(activeTopic, displayedTab)}
         </div>
       </main>
+
+      {/* ---- Download bundle modal (PR-5) ---- */}
+      {/* Mounted unconditionally at the page level. The modal's
+          own `open` prop controls visibility; the shared Modal
+          shell it uses renders nothing when closed, so there is
+          no cost to keeping it in the tree. The `topic` prop is
+          the loaded topic, which the modal uses to compute the
+          default filename and to locate the topic's on-disk
+          folders. */}
+      <DownloadBundleModal
+        open={bundleModalOpen}
+        onClose={() => setBundleModalOpen(false)}
+        topic={activeTopic}
+      />
     </div>
   );
 };

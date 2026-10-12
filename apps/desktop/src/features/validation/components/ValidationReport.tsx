@@ -1,15 +1,29 @@
 /**
  * ValidationReport — the Report tab's top-level component.
  *
- * Reads the current article from the writer store and the latest
- * validation report from the validation hook, and renders the six
- * section panels with the report's corresponding sections. A
- * status banner at the top of the component shows the report's
- * aggregate `overallStatus` (good / warning / fail). When no
- * report exists yet, the component shows a "Run Validation"
+ * Reads the topic's article from the writer store (via
+ * `useWriter(topic._id)`) and the topic's latest validation report
+ * from the validation hook (via `useValidation(topic._id)`), and
+ * renders the six section panels with the report's corresponding
+ * sections. A status banner at the top of the component shows the
+ * report's aggregate `overallStatus` (good / warning / fail). When
+ * no report exists yet, the component shows a "Run Validation"
  * action; when a report exists, it shows a "Re-validate" action.
  * While a run is in flight, a live progress panel replaces the
  * panels' content.
+ *
+ * ── The two hook signatures (PR-1) ─────────────────────────────
+ *
+ *   Both hooks this component consumes take the topic ID as their
+ *   first argument, per Q4.3's "refactor all feature stores to key
+ *   by topicId in the same pass." The `topic` prop supplies that
+ *   ID directly (`topic._id`).
+ *
+ *   The consequence is that the article and the report this
+ *   component reads are the ones belonging to the topic it was
+ *   mounted for — not whichever topic last wrote to a store-wide
+ *   slot. Two `<ValidationReport />` instances mounted for two
+ *   different topics would read independent state.
  *
  * ── Where the six panels come from ─────────────────────────────
  *
@@ -44,15 +58,19 @@
  *   The Report tab needs an article's `_id` and its topic's `_id`
  *   to call `runValidation(articleId, topicId)`. The `topic` prop
  *   supplies the topic ID directly (`topic._id`). The article ID
- *   comes from the writer store's `article` field — the same
- *   `Article` object that the sibling `ArticlePreview` component
- *   renders in the Article tab.
+ *   comes from the writer store's per-topic `articlesByTopic[topic._id]`
+ *   slot — the same `Article` object that the sibling
+ *   `ArticlePreview` component renders in the Article tab. Both
+ *   components read from the same slot because both call
+ *   `useWriter(topic._id)`.
  *
  *   The consequence is documented in `WriterProgress.tsx`'s PLAN
  *   DELTA 1: on a cold mount of a topic that has an article on
  *   the backend but no article in the writer store, the Report
  *   tab shows its "no article yet" empty state. The "load the
- *   last article on mount" flow is a future session's addition.
+ *   last article on mount" flow is a future session's addition —
+ *   once it lands, `useWriter(topic._id)`'s `loadLatest` action
+ *   will be what populates the slot this component reads.
  *
  * ── The five visual states ─────────────────────────────────────
  *
@@ -261,7 +279,7 @@ const ProgressLine = ({
  * behind the design choices.
  */
 export const ValidationReport = ({ topic }: ValidationReportProps) => {
-  const { article } = useWriter();
+  const { article } = useWriter(topic._id);
   const {
     report,
     isRunning,
@@ -269,7 +287,7 @@ export const ValidationReport = ({ topic }: ValidationReportProps) => {
     error,
     runValidation,
     clearError,
-  } = useValidation();
+  } = useValidation(topic._id);
 
   // ---- Start / retry ----
   // The handler for the "Run Validation" button, the
@@ -284,8 +302,8 @@ export const ValidationReport = ({ topic }: ValidationReportProps) => {
 
   // ---- Dismiss ----
   const handleDismiss = useCallback((): void => {
-    clearError();
-  }, [clearError]);
+    clearError(topic._id);
+  }, [clearError, topic._id]);
 
   // ---- State 1: NO ARTICLE ----
   // The writer store has no article for the current session.

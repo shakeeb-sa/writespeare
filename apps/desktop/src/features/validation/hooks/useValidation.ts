@@ -18,21 +18,42 @@
  *     data fields and the actions — under the names the plan's
  *     Part 1.12 table declares.
  *
+ * ── The hook's signature (PR-1) ─────────────────────────────────
+ *
+ *   `useValidation(topicId)` — the topic ID argument is required.
+ *   The hook reads the topic's per-topic slots from the store via
+ *   selectors keyed on that ID, so two components rendering
+ *   different topics see independent state, and the same
+ *   component re-renders only when its own topic's state changes.
+ *
+ *   This mirrors `useWriter(topicId)`, `useResearch(topicId)`,
+ *   and `useDocuments(topicId)`'s shape. Every feature hook that
+ *   drives a per-topic pipeline stage takes the topic ID as its
+ *   first argument, so the pattern is uniform across the writer,
+ *   research, documents, and validation features. The signature
+ *   change is the PR-1 store-isolation refactor's consequence for
+ *   this file, per Q4.3's "refactor all feature stores to key by
+ *   topicId in the same pass."
+ *
  * ── The hook's API ──────────────────────────────────────────────
  *
- *   Data fields:
+ *   Data fields (all read from the topic passed to the hook):
  *
- *     activeArticleId  The article whose report the store holds,
- *                      or null before any validation run.
- *     activeTopicId    The topic whose markers the store filters
- *                      on. Populated when a validation run starts.
- *     isRunning        Whether a validation run is in flight.
- *     progress         The live progress of the running operation,
- *                      or null when none is running.
- *     report           The last successfully-generated Report, or
- *                      null before the first one.
- *     status           The store's async lifecycle state.
- *     error            The last error message, or null.
+ *     activeArticleId  The article that most recently began a
+ *                      validation run, or null before any run. A
+ *                      tracking field only; the marker handler
+ *                      routes each marker by its payload's
+ *                      `topicId`, not by this value.
+ *     activeTopicId    The topic that most recently began a
+ *                      validation run. A tracking field only.
+ *     isRunning        Whether a validation run is in flight for
+ *                      the topic.
+ *     progress         The live progress of the running operation
+ *                      for the topic, or null when none is running.
+ *     report           The topic's last successfully-generated
+ *                      Report, or null before the first one.
+ *     status           The topic's async lifecycle state.
+ *     error            The topic's last error message, or null.
  *
  *   Actions:
  *
@@ -46,20 +67,24 @@
  *                      plan's Part 1.12 table uses. See "Why two
  *                      names for one action" below.
  *
- *     loadReport(articleId)
+ *     loadReport(articleId, topicId)
  *                      Fetch the most recent report for an article
  *                      from the backend without re-running the
  *                      validators. Resolves with the fetched
  *                      `Report`, or null when none exists or the
  *                      fetch failed.
  *
- *     setReport(report)
- *                      Set the current report directly, without a
- *                      network round trip.
+ *     setReport(topicId, report)
+ *                      Set the topic's report directly, without a
+ *                      network round trip. Pass null to clear.
  *
- *     clearError()     Clear the last error message.
+ *     clearError(topicId)
+ *                      Clear the topic's last error message.
  *
- *     reset()          Reset the store to its initial state.
+ *     reset()          Reset the store to its initial state. A
+ *                      store-wide operation, not a per-topic one;
+ *                      the root store's logout flow is the caller
+ *                      that uses it.
  *
  * ── Why two names for one action ───────────────────────────────
  *
@@ -193,38 +218,42 @@ import type { Report } from '../../shared/types/index.js';
 export interface ValidationHookValue {
   // ---- Data ----
 
-  /** The article whose report the store holds, or null before the
-   *  first validation run. */
+  /** The article that most recently began a validation run, or
+   *  null before any run. A tracking field only; the marker
+   *  handler routes each marker by its payload's `topicId`, not
+   *  by this value. */
   activeArticleId: string | null;
 
-  /** The topic whose markers the store filters on. Populated when
-   *  a validation run starts. */
+  /** The topic that most recently began a validation run. A
+   *  tracking field only. */
   activeTopicId: string | null;
 
-  /** Whether a validation run is currently in flight. */
+  /** Whether a validation run is currently in flight for the
+   *  topic passed to the hook. */
   isRunning: boolean;
 
-  /** The live progress of the running operation, or null when
-   *  none is running. */
+  /** The live progress of the running operation for the topic, or
+   *  null when none is running. */
   progress: ValidationProgress | null;
 
-  /** The last successfully-generated report, or null before the
-   *  first one. */
+  /** The topic's last successfully-generated report, or null
+   *  before the first one. */
   report: Report | null;
 
-  /** The store's async lifecycle state. See `ValidationStoreStatus`
+  /** The topic's async lifecycle state. See `ValidationStoreStatus`
    *  in `validationStore.ts` for the meaning of each value. */
   status: ValidationStoreStatus;
 
-  /** The last error message from an async action, or null. */
+  /** The topic's last error message from an async action, or
+   *  null. */
   error: string | null;
 
   // ---- Actions ----
 
   /** Start a validation operation for an article. Resolves with
    *  the created `Report` on success, or null on failure. The
-   *  `topicId` argument is required to filter the marker stream
-   *  — see the file header for the reasoning. */
+   *  `topicId` argument identifies which per-topic slot the
+   *  store updates — see the file header for the reasoning. */
   runValidation: (
     articleId: string,
     topicId: string
@@ -241,17 +270,23 @@ export interface ValidationHookValue {
   /** Fetch the most recent report for an article from the
    *  backend without re-running the validators. Resolves with
    *  the fetched `Report`, or null when none exists or the fetch
-   *  failed. */
-  loadReport: (articleId: string) => Promise<Report | null>;
+   *  failed. The `topicId` argument identifies which per-topic
+   *  slot the store caches the result in. */
+  loadReport: (
+    articleId: string,
+    topicId: string
+  ) => Promise<Report | null>;
 
-  /** Set the current report directly, without a network round
+  /** Set the topic's report directly, without a network round
    *  trip. Pass null to clear. */
-  setReport: (report: Report | null) => void;
+  setReport: (topicId: string, report: Report | null) => void;
 
-  /** Clear the last error message. */
-  clearError: () => void;
+  /** Clear the topic's last error message. */
+  clearError: (topicId: string) => void;
 
-  /** Reset the store to its initial state. */
+  /** Reset the store to its initial state. A store-wide operation,
+   *  not a per-topic one; the root store's logout flow is the
+   *  caller that uses it. */
   reset: () => void;
 }
 
@@ -264,17 +299,51 @@ export interface ValidationHookValue {
  * file header for the hook's role, its relationship to the store,
  * and the reasoning behind the design choices.
  */
-export const useValidation = (): ValidationHookValue => {
+export const useValidation = (topicId: string): ValidationHookValue => {
   // ---- Data subscriptions ----
-  // One selector per data field. See the file header for why
-  // the fields are read individually rather than as one object.
+  // One selector per data field, each keyed on the hook's
+  // `topicId` argument. See the file header for why the fields
+  // are read individually and why the keying matters.
+  //
+  // `activeArticleId` and `activeTopicId` are store-wide tracking
+  // fields — the article and topic that most recently began a
+  // validation run — so they are selected directly, not through
+  // a per-topic record.
+  //
+  // The remaining five fields are per-topic records. Each raw
+  // selector can return `undefined` when the topic has no entry
+  // yet; the derived bindings below apply the store's documented
+  // fallback values so the interface's non-optional fields always
+  // carry a well-typed value.
   const activeArticleId = useValidationStore((s) => s.activeArticleId);
   const activeTopicId = useValidationStore((s) => s.activeTopicId);
-  const isRunning = useValidationStore((s) => s.isRunning);
-  const progress = useValidationStore((s) => s.progress);
-  const report = useValidationStore((s) => s.report);
-  const status = useValidationStore((s) => s.status);
-  const error = useValidationStore((s) => s.error);
+  const isRunningRaw = useValidationStore(
+    (s) => s.isRunningByTopic[topicId]
+  );
+  const progressRaw = useValidationStore(
+    (s) => s.progressByTopic[topicId]
+  );
+  const reportRaw = useValidationStore(
+    (s) => s.reportByTopic[topicId]
+  );
+  const statusRaw = useValidationStore(
+    (s) => s.statusByTopic[topicId]
+  );
+  const errorRaw = useValidationStore(
+    (s) => s.errorByTopic[topicId]
+  );
+
+  // ---- Derived fields ----
+  // The `?? default` fallbacks mirror the store's own getters
+  // (`getIsRunning`, `getProgress`, `getReport`, `getStatus`,
+  // `getError`) so a caller reading through the hook sees the
+  // same values a caller reading through `useValidationStore`
+  // directly would see.
+  const isRunning: boolean = isRunningRaw ?? false;
+  const progress: ValidationProgress | null = progressRaw ?? null;
+  const report: Report | null = reportRaw ?? null;
+  const status: ValidationStoreStatus = statusRaw ?? 'idle';
+  const error: string | null = errorRaw ?? null;
 
   // ---- Action subscriptions ----
   // Zustand actions are stable references for the life of the
