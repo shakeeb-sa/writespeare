@@ -153,6 +153,7 @@ import {
   Download,
   FileText,
   Loader2,
+  LogIn,
   Moon,
   RotateCcw,
   Save,
@@ -167,6 +168,9 @@ import {
 import { useSettings } from '../hooks/useSettings.js';
 import { useAuth } from '../../auth/hooks/useAuth.js';
 import { useToast } from '../../shared/hooks/useToast.js';
+import { useDeepSeekSession } from '../../writer/hooks/useDeepSeekSession.js';
+import PromptsEditor from '../components/PromptsEditor.js';
+import SearchDistribution from '../../topics/components/SearchDistribution.js';
 import {
   PRESET_DESCRIPTIONS,
   PRESET_LABELS,
@@ -499,6 +503,98 @@ const renderGeneralTab = (props: GeneralTabProps): ReactNode => {
         </div>
       </section>
 
+            {/* ---- Downloads ---- */}
+      <section>
+        <SectionHeader
+          title="Downloads"
+          description="Where the &ldquo;Download bundle&rdquo; action saves its output."
+        />
+        <div className="divide-y divide-neutral-100 dark:divide-neutral-800/60">
+          <FieldRow
+            label="Download destination"
+            hint="Ask each time, or save silently to a default location."
+          >
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => updateDraft('bundleDownloadMode', 'ask')}
+                disabled={disabled}
+                className={
+                  'inline-flex items-center rounded-lg border ' +
+                  'px-3 py-1.5 text-xs font-medium ' +
+                  'transition-colors ' +
+                  'disabled:cursor-not-allowed disabled:opacity-60 ' +
+                  'focus-visible:outline-none ' +
+                  (draft.bundleDownloadMode === 'ask'
+                    ? 'border-primary bg-primary/10 text-primary ' +
+                      'dark:bg-primary-light/10 ' +
+                      'dark:text-primary-light'
+                    : 'border-neutral-300 bg-background text-text ' +
+                      'hover:bg-neutral-100 ' +
+                      'dark:border-neutral-700 ' +
+                      'dark:hover:bg-neutral-800 ' +
+                      'dark:text-neutral-100')
+                }
+              >
+                Ask each time
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  updateDraft('bundleDownloadMode', 'default')
+                }
+                disabled={disabled}
+                className={
+                  'inline-flex items-center rounded-lg border ' +
+                  'px-3 py-1.5 text-xs font-medium ' +
+                  'transition-colors ' +
+                  'disabled:cursor-not-allowed disabled:opacity-60 ' +
+                  'focus-visible:outline-none ' +
+                  (draft.bundleDownloadMode === 'default'
+                    ? 'border-primary bg-primary/10 text-primary ' +
+                      'dark:bg-primary-light/10 ' +
+                      'dark:text-primary-light'
+                    : 'border-neutral-300 bg-background text-text ' +
+                      'hover:bg-neutral-100 ' +
+                      'dark:border-neutral-700 ' +
+                      'dark:hover:bg-neutral-800 ' +
+                      'dark:text-neutral-100')
+                }
+              >
+                Save to default
+              </button>
+            </div>
+          </FieldRow>
+
+          {draft.bundleDownloadMode === 'default' && (
+            <FieldRow
+              label="Default path"
+              hint="Absolute path to the folder where bundles are written."
+            >
+              <input
+                type="text"
+                value={draft.bundleDownloadPath}
+                onChange={(e) =>
+                  updateDraft('bundleDownloadPath', e.target.value)
+                }
+                disabled={disabled}
+                placeholder="~/Downloads/WriteSpeare"
+                className={
+                  'min-w-[18rem] rounded-lg border ' +
+                  'border-neutral-300 bg-background px-3 py-2 ' +
+                  'text-sm text-text placeholder-neutral-400 ' +
+                  'focus:border-primary ' +
+                  'disabled:cursor-not-allowed disabled:opacity-60 ' +
+                  'dark:border-neutral-700 dark:bg-neutral-950 ' +
+                  'dark:text-neutral-100 ' +
+                  'dark:placeholder-neutral-500'
+                }
+              />
+            </FieldRow>
+          )}
+        </div>
+      </section>
+
       {/* ---- Updates ---- */}
       <section>
         <SectionHeader
@@ -645,6 +741,23 @@ const renderPresetsTab = (props: PresetsTabProps): ReactNode => {
           })}
         </div>
       </section>
+            {/* ---- Default search distribution ---- */}
+      <section>
+        <SectionHeader
+          title="Default search distribution"
+          description="Seeds the four-bucket counts for new topics when no preset overrides them. Set any bucket to 0 to skip that time range entirely."
+        />
+        <SearchDistribution
+          value={draft.defaultBucketLayout}
+          onChange={(patch) =>
+            updateDraft('defaultBucketLayout', {
+              ...draft.defaultBucketLayout,
+              ...patch,
+            })
+          }
+          disabled={disabled}
+        />
+      </section>
 
       {/* ---- Default profile ---- */}
       <section>
@@ -687,89 +800,8 @@ const renderPresetsTab = (props: PresetsTabProps): ReactNode => {
 
 // ---- Prompts ----
 
-interface PromptsTabProps {
-  draft: UserSettingsMap;
-  updateDraft: <K extends keyof UserSettingsMap>(
-    key: K,
-    value: UserSettingsMap[K]
-  ) => void;
-  disabled: boolean;
-}
-
-const renderPromptsTab = (props: PromptsTabProps): ReactNode => {
-  const { draft, updateDraft, disabled } = props;
-
-  return (
-    <div className="space-y-8">
-      <section>
-        <SectionHeader
-          title="Default prompt template"
-          description="The Jinja2 template the writer step renders into the DeepSeek prompt. Individual topics can override this."
-        />
-        <div className="divide-y divide-neutral-100 dark:divide-neutral-800/60">
-          <FieldRow
-            label="Prompt file"
-            hint="Filename resolved relative to the prompts folder."
-          >
-            <input
-              type="text"
-              value={draft.defaultPromptFile}
-              onChange={(e) =>
-                updateDraft('defaultPromptFile', e.target.value)
-              }
-              disabled={disabled}
-              placeholder="default.md"
-              className={
-                'min-w-[14rem] rounded-lg border ' +
-                'border-neutral-300 bg-background px-3 py-2 ' +
-                'text-sm text-text placeholder-neutral-400 ' +
-                'focus:border-primary ' +
-                'disabled:cursor-not-allowed disabled:opacity-60 ' +
-                'dark:border-neutral-700 dark:bg-neutral-950 ' +
-                'dark:text-neutral-100 ' +
-                'dark:placeholder-neutral-500'
-              }
-            />
-          </FieldRow>
-        </div>
-      </section>
-
-      <section>
-        <SectionHeader title="Built-in templates" />
-        <ul className="space-y-2 rounded-lg border border-neutral-200 p-4 text-sm dark:border-neutral-800">
-          <li className="flex items-baseline gap-2">
-            <code className="font-mono text-xs text-primary dark:text-primary-light">
-              default.md
-            </code>
-            <span className="text-neutral-600 dark:text-neutral-300">
-              Neutral, informative voice. Good for most topics.
-            </span>
-          </li>
-          <li className="flex items-baseline gap-2">
-            <code className="font-mono text-xs text-primary dark:text-primary-light">
-              seo-focused.md
-            </code>
-            <span className="text-neutral-600 dark:text-neutral-300">
-              Keyword-heavy. Explicit placement rules for each keyword.
-            </span>
-          </li>
-          <li className="flex items-baseline gap-2">
-            <code className="font-mono text-xs text-primary dark:text-primary-light">
-              conversational.md
-            </code>
-            <span className="text-neutral-600 dark:text-neutral-300">
-              Warm, first-person voice. Good for personal blogs.
-            </span>
-          </li>
-        </ul>
-        <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
-          Custom templates can be added by creating a new file in the
-          app&rsquo;s prompts folder. Reference it by filename above or
-          per-topic in the Advanced Settings of the New Topic modal.
-        </p>
-      </section>
-    </div>
-  );
+const renderPromptsTab = (): ReactNode => {
+  return <PromptsEditor />;
 };
 
 // ---- Validation ----
@@ -850,48 +882,111 @@ const renderValidationTab = (props: ValidationTabProps): ReactNode => {
 
 // ---- DeepSeek ----
 
-const renderDeepSeekTab = (): ReactNode => (
-  <div className="space-y-8">
-    <section>
-      <SectionHeader
-        title="Connection"
-        description="How WriteSpeare talks to DeepSeek."
-      />
-      <div className="space-y-3 text-sm">
-        <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-          <p className="font-medium text-text dark:text-neutral-100">
-            Persistent session
-          </p>
-          <p className="mt-0.5 text-neutral-600 dark:text-neutral-300">
-            WriteSpeare drives DeepSeek through a Chrome window with a
-            dedicated user-data-dir. You signed in once during setup,
-            and that session persists across app restarts — you do not
-            log in again unless the session expires or you clear the
-            Chrome profile.
-          </p>
+interface DeepSeekTabProps {
+  session: { live: boolean; checkedAt: string } | null;
+  onSignIn: () => void;
+}
+
+const renderDeepSeekTab = (props: DeepSeekTabProps): ReactNode => {
+  const { session, onSignIn } = props;
+
+  const isLive = session?.live === true;
+  const checkedAt = session?.checkedAt ?? null;
+
+  return (
+    <div className="space-y-8">
+      {/* ---- Session status ---- */}
+      <section>
+        <SectionHeader
+          title="Session"
+          description="The DeepSeek session the writer step uses."
+        />
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              {isLive ? (
+                <CheckCircle2
+                  size={16}
+                  className="shrink-0 text-emerald-600 dark:text-emerald-400"
+                  aria-hidden="true"
+                />
+              ) : (
+                <AlertCircle
+                  size={16}
+                  className="shrink-0 text-amber-600 dark:text-amber-400"
+                  aria-hidden="true"
+                />
+              )}
+              <p className="text-sm font-medium text-text dark:text-neutral-100">
+                {isLive
+                  ? 'Signed in to DeepSeek'
+                  : 'Not signed in to DeepSeek'}
+              </p>
+            </div>
+            <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+              {isLive && checkedAt !== null
+                ? `Last checked ${new Date(checkedAt).toLocaleTimeString()}`
+                : 'The writer step needs a live DeepSeek session to run.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onSignIn}
+            className={
+              'shrink-0 inline-flex items-center gap-1.5 ' +
+              'rounded-lg bg-primary px-3 py-1.5 text-xs ' +
+              'font-medium text-white transition-colors ' +
+              'hover:bg-primary-dark focus-visible:outline-none'
+            }
+          >
+            <LogIn size={14} aria-hidden="true" />
+            <span>{isLive ? 'Sign in again' : 'Sign in to DeepSeek'}</span>
+          </button>
         </div>
-        <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-          <p className="font-medium text-text dark:text-neutral-100">
-            If the session expires
-          </p>
-          <p className="mt-0.5 text-neutral-600 dark:text-neutral-300">
-            The next writer operation that hits a login wall will block
-            and prompt you to sign in again in the Chrome window. Once
-            you sign in, the operation resumes automatically.
-          </p>
+      </section>
+
+      {/* ---- Connection ---- */}
+      <section>
+        <SectionHeader
+          title="Connection"
+          description="How WriteSpeare talks to DeepSeek."
+        />
+        <div className="space-y-3 text-sm">
+          <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+            <p className="font-medium text-text dark:text-neutral-100">
+              Persistent session
+            </p>
+            <p className="mt-0.5 text-neutral-600 dark:text-neutral-300">
+              WriteSpeare drives DeepSeek through a Chrome window with a
+              dedicated user-data-dir. You signed in once during setup,
+              and that session persists across app restarts — you do not
+              log in again unless the session expires or you clear the
+              Chrome profile.
+            </p>
+          </div>
+          <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+            <p className="font-medium text-text dark:text-neutral-100">
+              If the session expires
+            </p>
+            <p className="mt-0.5 text-neutral-600 dark:text-neutral-300">
+              The next writer operation that hits a login wall will block
+              and prompt you to sign in again in the Chrome window. Once
+              you sign in, the operation resumes automatically.
+            </p>
+          </div>
+          <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
+            <p className="font-medium text-text dark:text-neutral-100">
+              The Chrome profile location
+            </p>
+            <p className="mt-0.5 font-mono text-xs text-neutral-500 dark:text-neutral-400">
+              &lt;appData&gt;/writespeare-desktop/chrome-profile
+            </p>
+          </div>
         </div>
-        <div className="rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
-          <p className="font-medium text-text dark:text-neutral-100">
-            The Chrome profile location
-          </p>
-          <p className="mt-0.5 font-mono text-xs text-neutral-500 dark:text-neutral-400">
-            &lt;appData&gt;/writespeare-desktop/chrome-profile
-          </p>
-        </div>
-      </div>
-    </section>
-  </div>
-);
+      </section>
+    </div>
+  );
+};
 
 // ---- Admin ----
 
@@ -954,6 +1049,11 @@ export const Settings = (_props: SettingsProps = {}) => {
     saveSettings,
     clearError,
   } = useSettings();
+
+    const {
+    session: deepseekSession,
+    openLoginModal: openDeepSeekLogin,
+  } = useDeepSeekSession();
 
   const isAdmin = user?.role === 'admin';
 
@@ -1247,17 +1347,16 @@ export const Settings = (_props: SettingsProps = {}) => {
             updateDraft,
             disabled: saving,
           })}
-        {activeTab === 'prompts' &&
-          renderPromptsTab({
-            draft: activeDraft,
-            updateDraft,
-            disabled: saving,
-          })}
+        {activeTab === 'prompts' && renderPromptsTab()}
         {activeTab === 'validation' &&
           renderValidationTab({
             draft: activeDraft,
           })}
-        {activeTab === 'deepseek' && renderDeepSeekTab()}
+        {activeTab === 'deepseek' &&
+          renderDeepSeekTab({
+            session: deepseekSession,
+            onSignIn: openDeepSeekLogin,
+          })}
         {activeTab === 'admin' &&
           isAdmin &&
           renderAdminTab({
