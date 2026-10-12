@@ -201,6 +201,65 @@ const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) &&
   value.every((item) => typeof item === 'string');
 
+  /**
+ * The four time-range buckets a topic's search distribution is
+ * expressed as.
+ *
+ * Derived from `TopicCreatePayload['searchBuckets']` so the local
+ * shape cannot drift from the shape the shared types module
+ * declares. The `NonNullable<...>` wrapper is required because
+ * the field is optional on both `TopicCreatePayload` and
+ * `TopicUpdatePayload` — the handler only reaches this type after
+ * the request has supplied the field, so the `undefined` arm of
+ * the union is not relevant at that point.
+ *
+ * The same alias is declared (locally, for the same reason) in
+ * `settingsService.ts` and `adminController.ts`. All three
+ * declarations derive from their own feature's payload type, so
+ * they cannot silently disagree: if the shared declaration of the
+ * bucket-layout shape ever changes, every one of the three
+ * breaks at compile time on the same edit.
+ */
+type BucketLayout = NonNullable<
+  TopicCreatePayload['searchBuckets']
+>;
+
+/**
+ * Narrow `unknown` to a `BucketLayout`.
+ *
+ * Checks that the value is a plain object — not null, not an
+ * array — and that all four required fields are finite numbers.
+ * Does NOT check numeric ranges or integer-ness; the Topic
+ * schema's `SearchBucketsSchema` validators are authoritative on
+ * those, and its Mongoose ValidationError is translated to a 400
+ * by the terminal middleware. The controller only confirms that
+ * the shape is right before the value reaches the service.
+ *
+ * The predicate follows `isStringArray` in the file's guard
+ * order, matching the "compound of primitives" convention the
+ * runtime type guards section documents.
+ */
+const isBucketLayout = (value: unknown): value is BucketLayout => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v['anyTime'] === 'number' &&
+    Number.isFinite(v['anyTime']) &&
+    typeof v['pastYear'] === 'number' &&
+    Number.isFinite(v['pastYear']) &&
+    typeof v['pastMonth'] === 'number' &&
+    Number.isFinite(v['pastMonth']) &&
+    typeof v['pastWeek'] === 'number' &&
+    Number.isFinite(v['pastWeek'])
+  );
+};
+
 // ============================================================
 //  POST /api/topics
 // ============================================================
@@ -345,6 +404,20 @@ export const createTopic = async (
       return;
     }
     payload.wordCount = wordCount;
+  }
+
+  const searchBuckets = body['searchBuckets'];
+  if (searchBuckets !== undefined) {
+    if (!isBucketLayout(searchBuckets)) {
+      res.status(400).json({
+        success: false,
+        error:
+          'searchBuckets must be an object with anyTime, ' +
+          'pastYear, pastMonth, and pastWeek as numbers.',
+      });
+      return;
+    }
+    payload.searchBuckets = searchBuckets;
   }
 
   const sourceCount = body['sourceCount'];
@@ -672,6 +745,20 @@ export const updateTopic = async (
       return;
     }
     patch.wordCount = wordCount;
+  }
+
+  const searchBuckets = body['searchBuckets'];
+  if (searchBuckets !== undefined) {
+    if (!isBucketLayout(searchBuckets)) {
+      res.status(400).json({
+        success: false,
+        error:
+          'searchBuckets must be an object with anyTime, ' +
+          'pastYear, pastMonth, and pastWeek as numbers.',
+      });
+      return;
+    }
+    patch.searchBuckets = searchBuckets;
   }
 
   const sourceCount = body['sourceCount'];

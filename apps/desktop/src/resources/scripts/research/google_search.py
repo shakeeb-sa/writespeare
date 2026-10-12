@@ -158,6 +158,25 @@ from core.utils import (
 # would type if they pasted a Google search URL from the address bar.
 GOOGLE_SEARCH_URL = "https://www.google.com/search"
 
+# Maps each time-range bucket identifier to Google's `&tbs`
+# (time-based search) parameter value. The `anytime` bucket is
+# deliberately absent from this map — its absence is what causes
+# the `&tbs` parameter to be omitted from the search URL entirely,
+# which is Google's own representation of "no time filter". This
+# mirrors the manifest's rule: "Append &tbs=qdr:y|m|w when a range
+# is specified. Omit the parameter for anytime."
+#
+# The values use Google's `qdr:` (query date range) syntax:
+# `y` = past year, `m` = past month, `w` = past week. Google also
+# supports `qdr:h` (past hour) and `qdr:d` (past day), which this
+# map does not include because the pipeline's four-bucket
+# vocabulary does not have entries for them.
+TIME_RANGE_TO_TBS: dict[str, str] = {
+    "year": "qdr:y",
+    "month": "qdr:m",
+    "week": "qdr:w",
+}
+
 # Navigation and readiness timeouts, in milliseconds. Playwright's
 # timeout unit is milliseconds, not seconds — a detail that is easy
 # to forget and produces a ten-second page load becoming a
@@ -221,15 +240,33 @@ RATE_LIMIT_PHRASES = (
 #  URL helpers
 # =============================================================================
 
-def _build_search_url(query: str, start: int) -> str:
+def _build_search_url(
+    query: str,
+    start: int,
+    time_range: str = "anytime",
+) -> str:
     """
     Build the Google SERP URL for a query, at the given pagination
-    offset.
+    offset, restricted to the given time range.
 
     The `start` argument is the zero-based index of the first result
     to return on the page — Google's own pagination parameter, seen
     in the recording's page-2 URL as `&start=10`. Page 1 uses
     `start=0`.
+
+    The `time_range` argument is one of the four bucket identifiers
+    the pipeline's bucketed search queries (`anytime`, `year`,
+    `month`, `week`). Any value present in `TIME_RANGE_TO_TBS` is
+    translated into Google's `&tbs=qdr:<code>` parameter; every
+    other value — including `anytime` and any unrecognized string —
+    produces a URL with no time filter, which is Google's own
+    representation of "no time restriction". Treating an unknown
+    value as "no filter" rather than as an error is deliberate:
+    the caller (`main.py`) validates the value against the closed
+    set before invoking this script, so an unrecognized value
+    cannot arrive from a well-formed invocation, and the safe
+    fallback for a hypothetical malformed one is a search with no
+    filter rather than a crash mid-pipeline.
 
     The `hl=en` parameter pins the language to English so that the
     SERP layout matches what the selectors in this module were
@@ -241,7 +278,11 @@ def _build_search_url(query: str, start: int) -> str:
     any character that would break the URL is escaped.
     """
     q = quote_plus(query)
-    return f"{GOOGLE_SEARCH_URL}?q={q}&start={start}&hl=en"
+    base = f"{GOOGLE_SEARCH_URL}?q={q}&start={start}&hl=en"
+    tbs = TIME_RANGE_TO_TBS.get(time_range)
+    if tbs is None:
+        return base
+    return f"{base}&tbs={tbs}"
 
 
 def _detect_platform(url: str) -> str:
@@ -578,6 +619,7 @@ def run_search(
     max_results: int,
     topic_id: str,
     port: int,
+    time_range: str = "anytime",
 ) -> int:
     """
     Run a Google search and emit the candidate list as markers.
@@ -609,6 +651,22 @@ def run_search(
                       the renderer can route the candidates to the
                       correct store entry.
         port        – The Chrome CDP debug port to connect to.
+        time_range  – Which time-range bucket this search is for.
+                      One of `anytime`, `year`, `month`, `week`. The
+                      value is translated into Google's `&tbs`
+                      parameter by `_build_search_url`; `anytime`
+                      produces a search with no time filter, which
+                      is what every pre-bucketed caller expects.
+                      The default keeps a standalone invocation that
+                      omits the argument working unchanged.
+        time_range  – Which time-range bucket this search is for.
+                      One of `anytime`, `year`, `month`, `week`. The
+                      value is translated into Google's `&tbs`
+                      parameter by `_build_search_url`; `anytime`
+                      produces a search with no time filter, which
+                      is what every pre-bucketed caller expects.
+                      The default keeps a standalone invocation that
+                      omits the argument working unchanged.
 
     The function is fully synchronous — Playwright's sync API is
     used, matching `core.browser`'s implementation. It never runs
@@ -690,7 +748,7 @@ def run_search(
             sys.exit(EXIT_STOPPED)
 
         start = page_index * per_page
-        url = _build_search_url(query, start)
+        url = _build_search_url(query, start, time_range)
 
         log_info(f"Fetching results page {page_index + 1} (start={start})")
 
@@ -802,6 +860,7 @@ def run_search(
             MARKER_SEARCH_PROGRESS,
             {
                 "topicId": topic_id,
+                "timeRange": time_range,
                 "page": page_index + 1,
                 "found": len(collected),
                 "requested": effective_max,
@@ -852,6 +911,7 @@ def run_search(
             MARKER_SEARCH_RESULT,
             {
                 "topicId": topic_id,
+                "timeRange": time_range,
                 "query": query,
                 "keywords": keywords,
                 "candidates": [],
@@ -872,6 +932,7 @@ def run_search(
         MARKER_SEARCH_RESULT,
         {
             "topicId": topic_id,
+            "timeRange": time_range,
             "query": query,
             "keywords": keywords,
             "candidates": final_results,

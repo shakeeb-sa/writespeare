@@ -286,6 +286,7 @@ def _run_search(args: argparse.Namespace) -> int:
         max_results=args.max_results,
         topic_id=args.topic_id,
         port=args.port,
+        time_range=args.time_range,
     )
 
 
@@ -490,6 +491,16 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["google", "duckduckgo"],
         default="google",
         help="Search engine to use (default: google).",
+    )
+    search.add_argument(
+        "--time-range",
+        choices=["anytime", "year", "month", "week"],
+        default="anytime",
+        help=(
+            "The time window for this search. 'anytime' omits the "
+            "engine's time filter; the other three restrict results "
+            "to the past year, month, or week (default: anytime)."
+        ),
     )
     search.add_argument(
         "--max-results",

@@ -15,6 +15,87 @@ import type {
 import { AppError } from '../../shared/middleware/errorHandler.js';
 
 // ============================================================
+//  Bucket-layout helpers
+// ============================================================
+//
+//  A topic's two count-related fields — `searchBuckets` and
+//  `sourceCount` — are always written together, so that the
+//  invariant `sourceCount === sum of the four bucket counts`
+//  holds on every persisted topic. The helpers below implement
+//  the derivation in both directions: a bucket layout produces
+//  its sum, and a bare count produces an even-split layout that
+//  sums back to it.
+//
+//  The same invariant is enforced on the Preset side by
+//  `settingsService.ts` and `adminService.ts`, using the same
+//  derivation and synthesis rules. The three services are
+//  parallel by design — the layout-wins precedence is a
+//  cross-feature contract, not a per-feature choice — and a
+//  future refactor that promoted the helpers to
+//  `features/shared/utils/` would update all three files
+//  together.
+
+/**
+ * The four time-range buckets a topic's search distribution is
+ * expressed as.
+ *
+ * Derived from `TopicCreatePayload['searchBuckets']` so the local
+ * shape cannot drift from the shape the shared types module
+ * declares. The `NonNullable<...>` wrapper is required because
+ * the field is optional on the payload type — the service only
+ * reaches this type after the caller has supplied the field, so
+ * the `undefined` arm of the union is not relevant inside the
+ * helpers below.
+ */
+type BucketLayout = NonNullable<TopicCreatePayload['searchBuckets']>;
+
+/**
+ * Compute a topic's `sourceCount` from its `searchBuckets`.
+ *
+ * The sum of the four bucket counts is the total number of
+ * sources the search step will collect for the topic. Per the C2
+ * decision, the bucket layout is the single source of truth for
+ * "how many sources to collect", so this derived value is what
+ * gets persisted — never a separately-supplied count that could
+ * disagree with the layout.
+ */
+const deriveSourceCount = (layout: BucketLayout): number =>
+  layout.anyTime +
+  layout.pastYear +
+  layout.pastMonth +
+  layout.pastWeek;
+
+/**
+ * Synthesize an even-split `searchBuckets` layout from a bare
+ * `sourceCount`.
+ *
+ * Used only on the backward-compatibility path where a caller
+ * provides a `sourceCount` without a `searchBuckets` layout — an
+ * older desktop client, or a UI flow that has not yet been
+ * updated to expose the four buckets. The count is split evenly
+ * across the four buckets, with any remainder placed on
+ * `anyTime`, so the four counts always sum to the caller's
+ * number and the invariant holds on the persisted document.
+ *
+ * The same derivation rule is used by the migration script
+ * (`0001_add_bucket_layout.py`) when synthesizing a bucket layout
+ * for legacy topic records. Keeping the two implementations
+ * identical means a legacy record migrated by the script and a
+ * legacy record updated by this function end up with the same
+ * layout for the same source count.
+ */
+const synthesizeBucketLayout = (sourceCount: number): BucketLayout => {
+  const per = Math.floor(sourceCount / 4);
+  const remainder = sourceCount - per * 4;
+  return {
+    anyTime: per + remainder,
+    pastYear: per,
+    pastMonth: per,
+    pastWeek: per,
+  };
+};
+
+// ============================================================
 //  createTopic
 // ============================================================
 
@@ -28,10 +109,20 @@ import { AppError } from '../../shared/middleware/errorHandler.js';
  * authenticated session, not from anything the client controls.
  *
  * Defaults for optional fields (preset, profile, promptFile,
- * wordCount, sourceCount, status) are applied by the schema, not
- * here. Passing an explicit `undefined` would violate
+ * wordCount, status) are applied by the schema, not here.
+ * Passing an explicit `undefined` would violate
  * `exactOptionalPropertyTypes`, so the function conditionally
  * spreads only the fields the caller actually provided.
+ *
+ * The two count-related fields — `searchBuckets` and
+ * `sourceCount` — are the one exception to the "schema applies
+ * the default" rule, because the two must stay coherent with
+ * each other. See the derivation block in the body below for
+ * the rule: the bucket layout wins when provided, `sourceCount`
+ * is derived as its sum, and when only a bare `sourceCount` is
+ * provided the layout is synthesized to match it. The schema's
+ * own defaults for the two fields apply only when neither is
+ * provided by the caller.
  *
  * Throws `AppError(400)` for an empty title (the schema's
  * `minlength: 3` also catches this, but doing it here produces a
@@ -53,6 +144,28 @@ export const createTopic = async (
     );
   }
 
+  // Derive the two count-related fields together. The bucket
+  // layout is the source of truth (per the C2 decision): when
+  // the caller provides `searchBuckets`, it wins and
+  // `sourceCount` is derived as the sum of the four bucket
+  // counts. When the caller provides only a bare `sourceCount`
+  // (backward compatibility), a bucket layout is synthesized as
+  // an even split with the remainder on `anyTime`. When neither
+  // is provided, both are left unset and the schema's defaults
+  // apply. The invariant
+  // `sourceCount === sum of the four bucket counts` therefore
+  // holds on every persisted topic.
+  const derivedSearchBuckets =
+    payload.searchBuckets !== undefined
+      ? payload.searchBuckets
+      : payload.sourceCount !== undefined
+        ? synthesizeBucketLayout(payload.sourceCount)
+        : undefined;
+  const derivedSourceCount =
+    payload.searchBuckets !== undefined
+      ? deriveSourceCount(payload.searchBuckets)
+      : payload.sourceCount;
+
   const doc = new TopicModel({
     userId,
     title: trimmedTitle,
@@ -67,8 +180,11 @@ export const createTopic = async (
     ...(payload.wordCount !== undefined
       ? { wordCount: payload.wordCount }
       : {}),
-    ...(payload.sourceCount !== undefined
-      ? { sourceCount: payload.sourceCount }
+    ...(derivedSearchBuckets !== undefined
+      ? { searchBuckets: derivedSearchBuckets }
+      : {}),
+    ...(derivedSourceCount !== undefined
+      ? { sourceCount: derivedSourceCount }
       : {}),
   });
 
@@ -151,6 +267,17 @@ export const getTopicById = async (
  * empty value of the field's type (an empty string for string
  * fields, an empty array for the keywords list).
  *
+ * One coherence rule lives here rather than in the schema: the
+ * topic's two count fields — `searchBuckets` and `sourceCount`
+ * — are always written together, so the invariant
+ * `sourceCount === sum of the four bucket counts` holds on
+ * every persisted document. When the patch provides
+ * `searchBuckets`, the layout wins and `sourceCount` is
+ * derived from it; when the patch provides only a bare
+ * `sourceCount` (backward compatibility), a bucket layout is
+ * synthesized to match. See the block comment in the function
+ * body for the exact rule.
+ *
  * One business rule lives here rather than in the schema: when
  * `status` is being changed to anything other than `'failed'`,
  * the `error` field is unset. A topic whose status is
@@ -211,7 +338,24 @@ export const updateTopic = async (
     setFields['wordCount'] = patch.wordCount;
   }
 
-  if (patch.sourceCount !== undefined) {
+  // The two count fields are handled together, in this order,
+  // so the bucket layout wins whenever both are present. Per
+  // the C2 decision, the layout is the single source of truth
+  // for "how many sources to collect", so when `searchBuckets`
+  // is present `sourceCount` is derived from it and the
+  // caller's raw count is ignored. When only `sourceCount` is
+  // present — a legacy client, or a UI flow that has not yet
+  // been updated — a bucket layout is synthesized as an even
+  // split with the remainder on `anyTime`, keeping the
+  // invariant `sourceCount === sum of the four bucket counts`
+  // intact on the persisted document.
+  if (patch.searchBuckets !== undefined) {
+    setFields['searchBuckets'] = patch.searchBuckets;
+    setFields['sourceCount'] = deriveSourceCount(patch.searchBuckets);
+  } else if (patch.sourceCount !== undefined) {
+    setFields['searchBuckets'] = synthesizeBucketLayout(
+      patch.sourceCount
+    );
     setFields['sourceCount'] = patch.sourceCount;
   }
 

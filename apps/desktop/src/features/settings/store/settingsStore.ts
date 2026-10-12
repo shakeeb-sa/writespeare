@@ -1,7 +1,7 @@
 /**
  * settingsStore — the renderer's state for the settings feature.
  *
- * Holds the user's `UserSettingsMap` — the six cross-topic
+ * Holds the user's `UserSettingsMap` — the nine cross-topic
  * preferences the backend's `UserSetting` document carries — plus
  * the store's async lifecycle state and the last error message.
  * The store exposes two async actions that reach the main process

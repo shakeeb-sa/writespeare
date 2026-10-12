@@ -187,6 +187,58 @@ const isNumberTuple2 = (value: unknown): value is [number, number] => {
   );
 };
 
+/**
+ * The four time-range buckets a preset's default search
+ * distribution is expressed as.
+ *
+ * Derived from `PresetCreatePayload['defaultBucketLayout']` so the
+ * local shape cannot drift from the shape the shared types module
+ * declares. If the shared declaration ever changes — a fifth
+ * bucket, a rename of one of the four — the compiler reports it at
+ * every call site in this file rather than letting this alias
+ * quietly disagree with the wire contract.
+ *
+ * The same alias is declared (locally, for the same reason) in
+ * `settingsService.ts`. The two declarations are intentionally
+ * parallel — the admin and settings features both validate and
+ * forward the same field, and the plan groups their updates
+ * together so the two read as matching implementations.
+ */
+type BucketLayout = PresetCreatePayload['defaultBucketLayout'];
+
+/**
+ * Narrow `unknown` to a `BucketLayout`.
+ *
+ * Checks that the value is a plain object — not null, not an
+ * array — and that all four required fields are finite numbers.
+ * Does NOT check numeric ranges or integer-ness; the Preset
+ * schema's validators are authoritative on those. The controller
+ * only confirms that the shape is right before the value reaches
+ * the service.
+ *
+ * The predicate is declared alongside the primitive predicates
+ * above rather than in its own section because it is a compound
+ * of them — it calls `isNumber` for each of its four fields — and
+ * belongs where a reader looking for "how does this controller
+ * validate a value" will find it.
+ */
+const isBucketLayout = (value: unknown): value is BucketLayout => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    isNumber(v['anyTime']) &&
+    isNumber(v['pastYear']) &&
+    isNumber(v['pastMonth']) &&
+    isNumber(v['pastWeek'])
+  );
+};
+
 // ============================================================
 //  GET /api/admin/presets
 // ============================================================
@@ -391,6 +443,17 @@ export const upsertSystemPreset = async (
     return;
   }
 
+  const defaultBucketLayout = body['defaultBucketLayout'];
+  if (!isBucketLayout(defaultBucketLayout)) {
+    res.status(400).json({
+      success: false,
+      error:
+        'defaultBucketLayout must be an object with anyTime, ' +
+        'pastYear, pastMonth, and pastWeek as numbers.',
+    });
+    return;
+  }
+
   const sourceCount = body['sourceCount'];
   if (!isNumber(sourceCount)) {
     res.status(400).json({
@@ -427,14 +490,7 @@ export const upsertSystemPreset = async (
     return;
   }
 
-  const maxResults = body['maxResults'];
-  if (!isNumber(maxResults)) {
-    res.status(400).json({
-      success: false,
-      error: 'maxResults must be a number.',
-    });
-    return;
-  }
+
 
   const pageLoadTimeout = body['pageLoadTimeout'];
   if (!isNumber(pageLoadTimeout)) {
@@ -581,11 +637,11 @@ export const upsertSystemPreset = async (
   const payload: PresetCreatePayload = {
     name,
     displayName,
+    defaultBucketLayout,
     sourceCount,
     wordCount,
     searchEngines,
     resultsPerPage,
-    maxResults,
     pageLoadTimeout,
     maxRetries,
     targetReadingGrade,

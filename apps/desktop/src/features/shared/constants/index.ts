@@ -163,6 +163,74 @@ export const MIN_WORDS = 100;
 export const MAX_WORDS = 10000;
 
 // ============================================================
+//  Search buckets
+// ============================================================
+//
+//  The four time-range buckets the search step queries. Each
+//  bucket is an independent search invocation with its own
+//  result set; the sum of the four buckets' counts is what a
+//  topic's `sourceCount` — and a preset's `defaultBucketLayout`,
+//  and a user's `defaultBucketLayout` — totals to. The bucket
+//  identifiers are what the Python search scripts accept on
+//  their `--time-range` argument, what the renderer's research
+//  store keys its per-bucket candidate and progress records on,
+//  and what the Search Distribution section of the New Topic
+//  modal groups its inputs under.
+
+/**
+ * The closed set of time-range bucket identifiers.
+ *
+ * The four values match the strings the Python search scripts
+ * accept on their `--time-range` argument (see
+ * `research/google_search.py` and `research/duckduckgo_search.py`)
+ * and the keys the renderer's research store uses in its
+ * per-bucket candidate and progress records.
+ *
+ * The array is `readonly` and declared with `as const` so
+ * TypeScript infers it as a tuple of literal string types rather
+ * than as `string[]`; that inference is what makes the
+ * `BucketKey` type below resolve to the literal union rather
+ * than to `string`.
+ */
+export const BUCKET_KEYS = [
+  'anytime',
+  'year',
+  'month',
+  'week',
+] as const;
+
+/**
+ * The literal-union type of bucket identifiers, derived from the
+ * `BUCKET_KEYS` tuple above. Consumers that want the type should
+ * import this, not redeclare it — a redeclaration would drift
+ * the moment the tuple changed.
+ *
+ * The union is the canonical shape for the `searchBuckets` field
+ * on `Topic`, the `defaultBucketLayout` field on `Preset` and
+ * `UserSettingsMap`, and the renderer's per-bucket records in
+ * the research store.
+ */
+export type BucketKey = (typeof BUCKET_KEYS)[number];
+
+/**
+ * Human-readable labels for each bucket, keyed by identifier.
+ *
+ * Declared as a `Record<BucketKey, string>` rather than a plain
+ * object so that the compiler enforces exhaustiveness: a new
+ * bucket added to `BUCKET_KEYS` without a corresponding label
+ * here is a compile error. The labels are what the four
+ * collapsible sections in the Sources tab render, what the
+ * Search Distribution section's four inputs are labeled with,
+ * and what the overall-progress line names each bucket by.
+ */
+export const BUCKET_LABELS: Record<BucketKey, string> = {
+  anytime: 'Any time',
+  year: 'Past year',
+  month: 'Past month',
+  week: 'Past week',
+};
+
+// ============================================================
 //  Preset names
 // ============================================================
 
@@ -221,13 +289,16 @@ export const PRESET_LABELS: Record<PresetName, string> = {
  * `PRESET_LABELS` — the `Record<PresetName, string>` type forces
  * one entry per identifier.
  *
- * The descriptions are drawn from the plan's user-journey
- * document, which describes the three named presets to the user
- * as:
+ * The descriptions describe each preset's search distribution as
+ * a total source count across the four time-range buckets. The
+ * number shown here is the sum of the four bucket counts the
+ * preset's `defaultBucketLayout` carries, and it is the same
+ * number the Search Distribution section of the New Topic modal
+ * surfaces as the preset's default layout:
  *
- *   Quick    — "5 sources, 800 words, fast, good for a first draft."
- *   Balanced — "10 sources, 1200 words, the recommended default."
- *   Deep     — "20 sources, 2000+ words, for pillar content."
+ *   Quick    — 15 sources across four time ranges, 800 words.
+ *   Balanced — 30 sources across four time ranges, 1200 words.
+ *   Deep     — 60 sources across four time ranges, 2000+ words.
  *
  * The `custom` description exists because the type demands an
  * entry, even though the picker never shows `custom` as a
@@ -235,9 +306,9 @@ export const PRESET_LABELS: Record<PresetName, string> = {
  * it appears as a topic's state.
  */
 export const PRESET_DESCRIPTIONS: Record<PresetName, string> = {
-  quick: '5 sources, 800 words. Fast — good for a first draft.',
-  balanced: '10 sources, 1200 words. The recommended default.',
-  deep: '20 sources, 2000+ words. For in-depth, pillar content.',
+  quick: '15 sources across four time ranges, 800 words. Fast — good for a first draft.',
+  balanced: '30 sources across four time ranges, 1200 words. The recommended default.',
+  deep: '60 sources across four time ranges, 2000+ words. For in-depth, pillar content.',
   custom: 'Configured with custom settings.',
 };
 

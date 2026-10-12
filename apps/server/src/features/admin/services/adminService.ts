@@ -180,6 +180,61 @@ import type { PresetCreatePayload } from '../../shared/types/index.js';
 import { AppError } from '../../shared/middleware/errorHandler.js';
 
 // ============================================================
+//  Bucket-layout helper
+// ============================================================
+//
+//  The system-preset upsert derives `sourceCount` from the
+//  payload's `defaultBucketLayout` before persisting, per the C2
+//  decision — the bucket layout is the single source of truth for
+//  "how many sources to collect". The same derivation is applied
+//  on the user-scoped `settingsService.createPreset` path; the
+//  two implementations are parallel by design, since the settings
+//  and admin features both write to the Preset collection through
+//  the same field contract.
+//
+//  The helper here is intentionally narrower than the settings
+//  service's: the admin controller requires `defaultBucketLayout`
+//  on every request (it is a required field on
+//  `PresetCreatePayload`), so there is no legacy-caller path that
+//  would need a synthesized layout from a bare `sourceCount`.
+//  Only `deriveSourceCount` is needed on this side.
+
+/**
+ * The four time-range buckets a preset's default search
+ * distribution is expressed as.
+ *
+ * Derived from `PresetCreatePayload['defaultBucketLayout']` so the
+ * shape here cannot drift from the shape the shared types module
+ * declares. If the shared declaration ever changes — a fifth
+ * bucket, a rename of one of the four — the compiler reports it at
+ * every call site in this file rather than letting this alias
+ * quietly disagree with the wire contract.
+ */
+type BucketLayout = PresetCreatePayload['defaultBucketLayout'];
+
+/**
+ * Compute a preset's `sourceCount` from its `defaultBucketLayout`.
+ *
+ * The sum of the four bucket counts is the total number of sources
+ * the preset instructs the search step to collect. Per the C2
+ * decision, this derived value is what gets persisted on the
+ * preset — never a separately-supplied count — so the two fields
+ * cannot drift on disk.
+ *
+ * Identical in shape and behaviour to the helper of the same name
+ * in `settingsService.ts`. The duplication is deliberate: the two
+ * services are peers, and a shared helper module would be a new
+ * file outside the plan's file tree. A future refactor that
+ * promoted the helper to `features/shared/utils/` would update
+ * both files together.
+ */
+const deriveSourceCount = (layout: BucketLayout): number =>
+  layout.anyTime +
+  layout.pastYear +
+  layout.pastMonth +
+  layout.pastWeek;
+
+// ============================================================
 //  listSystemPresets
 // ============================================================
 
@@ -262,14 +317,27 @@ export const getSystemPresetByName = async (
  *      genuinely needs the explicit normalization, because the
  *      stored value was already lowercased by a previous write.
  *
- *   2. Issue a single `findOneAndUpdate` with:
+ *   2. Derive `sourceCount` from the payload's
+ *      `defaultBucketLayout`. Per the C2 decision, the bucket
+ *      layout is the single source of truth for "how many
+ *      sources to collect", so the materialised `sourceCount`
+ *      field is always the sum of the four bucket counts —
+ *      never a caller-supplied number that could disagree with
+ *      the layout.
+ *
+ *   3. Issue a single `findOneAndUpdate` with:
  *
  *        filter:  { userId: null, name: normalizedName }
- *        update:  { $set: { ...payload, name: normalizedName,
+ *        update:  { $set: { ...payload,
+ *                           sourceCount: derivedSourceCount,
+ *                           name: normalizedName,
  *                           userId: null } }
  *        options: { upsert: true, new: true,
  *                   setDefaultsOnInsert: true,
  *                   runValidators: true }
+ *
+ *      The `sourceCount` entry comes AFTER the spread so the
+ *      derived value overrides whatever the payload carried.
  *
  *      The `userId: null` inside the `$set` is redundant on the
  *      update branch (the field is already null on the matched
@@ -282,7 +350,7 @@ export const getSystemPresetByName = async (
  *      call site, and the default covers any future schema-level
  *      change to the field's initial value.
  *
- *   3. Return the resulting document.
+ *   4. Return the resulting document.
  *
  * The `$set` operator (rather than a full document replace) is
  * deliberate: it means a caller who supplies a full payload
@@ -311,11 +379,20 @@ export const upsertSystemPreset = async (
 ): Promise<PresetDocument> => {
   const normalizedName = payload.name.trim().toLowerCase();
 
+  // Derive `sourceCount` from the bucket layout — see the
+  // function's docstring for the C2 rationale. The derived
+  // value overrides whatever the payload carried, so the
+  // invariant `sourceCount === sum of the four bucket counts`
+  // holds on the persisted document regardless of what the
+  // caller sent.
+  const sourceCount = deriveSourceCount(payload.defaultBucketLayout);
+
   const doc = await PresetModel.findOneAndUpdate(
     { userId: null, name: normalizedName },
     {
       $set: {
         ...payload,
+        sourceCount,
         name: normalizedName,
         userId: null,
       },
