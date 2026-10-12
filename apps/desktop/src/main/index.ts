@@ -28,7 +28,14 @@
  *      Vite dev server URL; in production, it loads the bundled
  *      `dist/renderer/index.html`.
  *
- *   4. Install the three lifecycle hooks every Electron app
+ *   4. Read the cached DeepSeek session status from the
+ *      encrypted store, and — when the Chrome launcher's
+ *      registry is non-empty — kick off a fresh check in the
+ *      background. The check is fire-and-forget; its result is
+ *      written to the same encrypted-store field the renderer
+ *      reads via `deepseek:checkSession`.
+ *
+ *   5. Install the three lifecycle hooks every Electron app
  *      needs:
  *
  *        - `window-all-closed` — quit the app on Windows and
@@ -46,31 +53,30 @@
  *          the research, extraction, and writer features are
  *          built in later sessions.
  *
- * What this file does NOT do yet — IPC handler registration:
+ * IPC handler registration:
  *
- *   The plan says this file is responsible for "IPC handler
- *   registration" — importing each feature's IPC module and
- *   calling its registration function. None of those modules
- *   exists on disk yet: they are declared in Sessions 6–19 of
- *   the plan (auth, topics, research, documents, writer,
- *   validation, export, settings, admin, automation).
+ *   Every feature's IPC module is imported at the top of this
+ *   file and its `register*IPC()` function is called inside the
+ *   `whenReady` callback, before the first window is created.
+ *   The registration installs the `ipcMain.handle(...)` handlers
+ *   for every channel that feature serves, so the renderer's
+ *   `window.electronAPI.*` calls resolve.
  *
- *   This file therefore does not import them. Importing a module
- *   that does not exist would be a compile error, and stubbing
- *   one would violate the execution protocol. Instead, the file
- *   is written so that IPC registration happens in a single,
- *   clearly marked place inside the `whenReady` callback. As each
- *   feature's IPC module is created in its session, one import
- *   line is added at the top of this file and one registration
- *   call is added in that block — the exact incremental pattern
- *   the backend's `app.ts` uses for its route mounts.
+ *   The list is complete as of PR-7 of the execution runbook:
+ *   auth, topics, research, documents, writer, validation,
+ *   export, settings, admin, automation, prompts, and deepseek.
+ *   Each module's session number is noted in the import block
+ *   above; the registration calls below are ordered by that
+ *   same session sequence so a reader scanning the callback
+ *   sees the same order the runbook uses.
  *
- *   The consequence today is that `window.electronAPI` exists in
- *   the renderer (its shape is defined by the preload), but every
- *   method it exposes will reject with "no handler registered for
- *   'channel:name'" until the corresponding IPC module is wired
- *   in. That is expected: the shell is what Session 4 produces;
- *   the IPC handlers are what Sessions 6–19 produce.
+ *   A feature's registration function is not idempotent —
+ *   `ipcMain.handle` refuses to register a second handler for
+ *   the same channel — so this file calls each one exactly once
+ *   per process. A future session that needed to re-register a
+ *   channel after a hot-reload would need to
+ *   `ipcMain.removeHandler` first; nothing in the current app
+ *   does that.
  *
  * Window creation — the settings that matter and why:
  *
@@ -171,6 +177,39 @@ import { registerExportIPC } from '../features/export/ipc/exportIPC.js';
 import { registerSettingsIPC } from '../features/settings/ipc/settingsIPC.js';
 import { registerAdminIPC } from '../features/admin/ipc/adminIPC.js';
 import { registerAutomationIPC } from '../features/automation/ipc/automationIPC.js';
+import { registerPromptsIPC } from '../features/writer/ipc/promptsIPC.js';
+import { registerDeepSeekIPC } from '../features/writer/ipc/deepseekIPC.js';
+
+// ---- Launch-time DeepSeek session check dependencies ----
+//
+// The three imports below support the launch-time session check
+// in the `whenReady` callback. They are declared separately from
+// the IPC module imports above because their purpose is
+// different: the IPC imports exist to register handlers, these
+// three exist to run one background operation at startup.
+//
+//   * `getDeepSeekSessionStatus` / `setDeepSeekSessionStatus`
+//     from `./store.js` — the encrypted store's accessor pair
+//     for the cached session-status field. The plan's PR-7
+//     modification to `main/store.ts` added the field.
+//
+//   * `checkSession` from the writer feature's
+//     `sessionCheckService` — the same triple-check the
+//     `deepseek:checkSession` IPC channel invokes. Called
+//     directly (not through the IPC layer) because no renderer
+//     is mounted yet at this point in the startup sequence.
+//
+//   * `getRunningInstances` from the research feature's
+//     `chromeLauncher` — used to decide whether a fresh check
+//     is worth running. The check is skipped when Chrome is
+//     not already open, matching the plan's N2 decision
+//     ("check at launch only if Chrome is already open").
+import {
+  getDeepSeekSessionStatus,
+  setDeepSeekSessionStatus,
+} from './store.js';
+import { checkSession } from '../features/writer/services/sessionCheckService.js';
+import { getRunningInstances } from '../features/research/services/chromeLauncher.js';
 
 // ============================================================
 //  Constants
@@ -398,14 +437,21 @@ void app.whenReady().then(() => {
   // `ipcMain.handle(...)` handlers for every channel that
   // feature serves, so the renderer's `window.electronAPI.*`
   // calls resolve. See the imports block at the top of this
-  // file for the full list of the ten functions being called
-  // here.
+  // file for the full list of the twelve functions being
+  // called here.
   //
   // The calls are ordered by session number so that a future
   // reader scanning this block sees the same sequence the
   // plan's coding order uses. Order does not affect runtime
   // behaviour — each function only registers handlers, and no
   // function depends on another having run first.
+  //
+  // `registerPromptsIPC` and `registerDeepSeekIPC` are the two
+  // most recent additions (PR-6 and PR-7 of the execution
+  // runbook). They are appended after the earlier ten so that
+  // the block reads as "the original ten, then the two
+  // additions" — the same incremental shape the import block
+  // above uses.
   registerAuthIPC();
   registerTopicsIPC();
   registerResearchIPC();
@@ -416,9 +462,73 @@ void app.whenReady().then(() => {
   registerSettingsIPC();
   registerAdminIPC();
   registerAutomationIPC();
+  registerPromptsIPC();
+  registerDeepSeekIPC();
 
   // ---- 3. Create the main window ----
   mainWindow = createWindow();
+
+    // ---- 4. Launch-time DeepSeek session check ----
+  //
+  // Per the plan's N2 decision: check at launch only if Chrome
+  // is already open. Otherwise the launch sequence leaves the
+  // cached status alone, and the first Chrome-requiring action
+  // (a search, an extraction, a writer run) runs its own fresh
+  // check when it is actually needed.
+  //
+  // The `getRunningInstances()` call is what distinguishes the
+  // two cases. When the launcher's registry is empty — the
+  // common case on a cold start, because the `before-quit`
+  // handler kills every tracked Chrome before the app exits —
+  // the cached status is left in place and no background check
+  // fires.
+  //
+  // When the registry is non-empty — a previous session left
+  // Chrome orphaned after an unclean exit — a fresh check runs
+  // in the background. The check is fire-and-forget: it does
+  // not block the window from opening, and its result is
+  // written to the encrypted store's cache so the renderer's
+  // first `deepseek:checkSession` call (whenever it fires)
+  // reads the freshest value.
+  //
+  // The cached status is read unconditionally, whether Chrome
+  // is running or not, so the developer-facing log line names
+  // the last-known state on every launch. The renderer reads
+  // the same value through its own hook; the log line exists
+  // for the Electron main process's terminal, not for the UI.
+  const cachedSession = getDeepSeekSessionStatus();
+  if (cachedSession !== null) {
+    console.log(
+      `[main] DeepSeek session cached: live=${cachedSession.live} ` +
+        `(checked ${cachedSession.checkedAt})`
+    );
+  } else {
+    console.log(
+      '[main] DeepSeek session status not yet cached — ' +
+        'will be populated on the first check.'
+    );
+  }
+  if (getRunningInstances().length > 0) {
+    void (async (): Promise<void> => {
+      try {
+        const result = await checkSession();
+        setDeepSeekSessionStatus(result);
+        console.log(
+          `[main] DeepSeek session re-checked at launch: ` +
+            `live=${result.live}`
+        );
+      } catch (err) {
+        // A failure here is logged but does not block startup.
+        // The renderer's own check — triggered on the settings
+        // page's mount and on the writer tab's idle state —
+        // re-runs when the user actually needs the status.
+        console.error(
+          '[main] launch-time DeepSeek session check failed:',
+          err
+        );
+      }
+    })();
+  }
 
   // ---- macOS activate handler ----
   // On macOS, closing the last window does not quit the app.

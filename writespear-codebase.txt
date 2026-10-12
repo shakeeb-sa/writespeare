@@ -193,6 +193,7 @@ apps/
         writer/
           components/
             ArticlePreview.tsx
+            DeepSeekLoginModal.tsx
             PromptSelector.tsx
             WriterProgress.tsx
           hooks/
@@ -200,9 +201,11 @@ apps/
             usePrompts.ts
             useWriter.ts
           ipc/
+            deepseekIPC.ts
             promptsIPC.ts
             writerIPC.ts
           services/
+            sessionCheckService.ts
             writerService.ts
           store/
             writerStore.ts
@@ -263,6 +266,7 @@ apps/
           main.py
           README.md
           requirements.txt
+          validate_prompt.py
     .gitattributes
     .gitignore
     index.html
@@ -4694,6 +4698,407 @@ export const SearchDistribution = ({
 export default SearchDistribution;
 </file>
 
+<file path="apps/desktop/src/features/writer/components/DeepSeekLoginModal.tsx">
+/**
+ * DeepSeekLoginModal — the manual DeepSeek sign-in modal.
+ *
+ * Rendered by whichever component triggered the sign-in flow via
+ * `useDeepSeekSession().openLoginModal()`. The modal is a
+ * controlled child of that caller: the caller reads its own
+ * hook instance's `isLoginModalOpen` flag and passes it down as
+ * the `open` prop, and it passes its own instance's
+ * `closeLoginModal` function down as the `onClose` prop. The
+ * modal itself uses a fresh `useDeepSeekSession()` instance
+ * internally, from which it reads `session` (for the auto-close
+ * detection) and `checkNow` (for the polling loop).
+ *
+ * ── Why the modal is a controlled child ────────────────────────
+ *
+ *   `isLoginModalOpen` is per-instance local state on the hook.
+ *   If the parent component (Settings page's DeepSeek tab, or the
+ *   writer tab's idle-state "Sign in to DeepSeek" CTA) calls
+ *   `openLoginModal()`, only the parent's hook instance has
+ *   `isLoginModalOpen = true`. A modal that read its own hook
+ *   instance's flag would see `false` and never render.
+ *
+ *   The correct arrangement is therefore the same one the shared
+ *   `Modal` component itself uses for every other modal in the
+ *   app: the parent owns the open/closed state, the child is a
+ *   controlled presenter that receives `open` and reports back
+ *   through `onClose`. The modal being a child of the parent —
+ *   not a self-contained entry point — is what makes the flag
+ *   visible to it.
+ *
+ *   See `useDeepSeekSession.ts`'s file header for the hook's own
+ *   statement of this contract ("the caller that invoked
+ *   `openLoginModal` is the caller that mounts the modal").
+ *
+ * ── Why the modal does NOT open Chrome ─────────────────────────
+ *
+ *   The plan's manifest line describes this file as "Modal that
+ *   opens Chrome", but the Chrome launch is already performed by
+ *   the hook's `openLoginModal()` action, which the CALLER runs
+ *   when it decides to open the flow. The modal's role is the
+ *   waiting UI: it shows the status, it polls the session, and
+ *   it dismisses itself when the user has signed in. Adding a
+ *   second `openLogin()` call inside this component would be
+ *   redundant at best, and at worst would fire a second Chrome
+ *   navigation while the first is still resolving.
+ *
+ *   The manifest's phrasing is read here as "the modal that is
+ *   part of the flow that opens Chrome" — the modal's existence
+ *   in the tree is what the CALLER relies on for the flow to
+ *   feel complete. The Chrome launch remains the hook's job.
+ *
+ * ── The polling loop ───────────────────────────────────────────
+ *
+ *   While `open` is true, the modal fires a check immediately
+ *   and then every 1500 ms. The interval is cleared when the
+ *   modal closes or unmounts. The 1500 ms cadence matches the
+ *   plan's user-journey description ("polling every 1.5
+ *   seconds") and is a balance between two failure modes:
+ *
+ *     * Too fast — the check spawns a Playwright-driven
+ *       inspection of the Chrome window; a 500 ms cadence would
+ *       run the inspection twice per second and add measurable
+ *       CPU load to a modal that the user may leave open while
+ *       they read the sign-in page.
+ *
+ *     * Too slow — a user who signs in quickly should not wait
+ *       more than a couple of seconds before the modal
+ *       disappears. 1500 ms is comfortably below the threshold
+ *       at which the delay becomes visible.
+ *
+ *   The immediate `checkNow()` on open is what makes the modal
+ *   feel responsive: if the session is already live (a returning
+ *   user who signed in through Chrome directly before opening
+ *   the modal), the auto-close effect below fires on the first
+ *   render after that check resolves, and the modal closes
+ *   without the user having to wait for a full polling cycle.
+ *
+ * ── The auto-close detection ───────────────────────────────────
+ *
+ *   A second effect watches `session?.live` and calls `onClose()`
+ *   as soon as it becomes true while the modal is open. The
+ *   `open &&` guard in the effect prevents a spurious close
+ *   when the modal is already closed but a stale `session`
+ *   value happens to be live — the effect would otherwise fire
+ *   `onClose()` on every render of a closed modal whose session
+ *   was live.
+ *
+ *   The `onClose()` call goes up to the parent, which owns the
+ *   flag and flips it. The modal itself does not set its own
+ *   open state — it has none. The two-layer arrangement is what
+ *   makes the modal a pure function of the parent's state: the
+ *   parent decides when to open it, the modal's own logic
+ *   decides when to request a close, and the parent is the only
+ *   thing that actually changes the flag.
+ *
+ * ── The Cancel button ──────────────────────────────────────────
+ *
+ *   Cancel closes the modal without any other side effect. The
+ *   Chrome window the hook opened stays open — it is the app's
+ *   shared persistent-profile instance, and closing it would
+ *   destroy the very session the user was about to create. A
+ *   user who cancels and later changes their mind can reopen
+ *   the modal from the same entry point; the Chrome window is
+ *   still there, waiting.
+ *
+ *   The Cancel button is the only explicit action on the modal.
+ *   Escape and overlay-click, both of which the shared Modal
+ *   component enables by default, also route through `onClose`
+ *   and are therefore equivalent to clicking Cancel.
+ *
+ * ── What this component does NOT do ────────────────────────────
+ *
+ *   - It does not open Chrome. See "Why the modal does NOT open
+ *     Chrome" above.
+ *
+ *   - It does not render itself conditionally. The shared Modal
+ *     component handles the mount/unmount and the enter/exit
+ *     animation based on its `open` prop. This component is
+ *     always in the parent's JSX; the parent's `open` prop
+ *     decides whether the modal is visible.
+ *
+ *   - It does not distinguish "the IPC check failed" from "the
+ *     session is not live". A failed check leaves `session` at
+ *     its last value; the modal keeps polling and the user keeps
+ *     waiting. The hook's file header documents why a transient
+ *     failure does not clear the cached status.
+ *
+ *   - It does not offer a "Retry" or "Reopen Chrome" action. The
+ *     Chrome window was opened by the hook and is on the user's
+ *     desktop; if it is closed, opening it again is what the
+ *     hook's `openLoginModal` does, and the user can invoke that
+ *     by closing and reopening the modal from the same entry
+ *     point.
+ *
+ *   - It does not show the timestamp of the last check. The
+ *     `session.checkedAt` field is available but is not needed
+ *     for the waiting message — a timestamp updated every 1.5
+ *     seconds would flicker and add visual noise without giving
+ *     the user any actionable information. A future session
+ *     that wanted a diagnostic line could read `session.checkedAt`
+ *     without changing the hook.
+ *
+ * Dependencies: react + lucide-react + the shared Modal + the
+ * sibling `useDeepSeekSession` hook. All present in the
+ * codebase.
+ */
+
+import {
+  useCallback,
+  useEffect,
+} from 'react';
+import { Loader2, LogIn } from 'lucide-react';
+
+import Modal from '../../shared/components/Modal.js';
+import { useDeepSeekSession } from '../hooks/useDeepSeekSession.js';
+
+// ============================================================
+//  Public types
+// ============================================================
+
+/**
+ * The props accepted by `DeepSeekLoginModal`.
+ *
+ * The shape is deliberately minimal. The modal is a controlled
+ * presenter: the parent owns the open/closed state and the modal
+ * reports a request to close. Everything else the modal needs
+ * (the current session status, the ability to trigger a fresh
+ * check) comes from the hook that the modal calls internally.
+ */
+export interface DeepSeekLoginModalProps {
+  /**
+   * Whether the modal is currently visible.
+   *
+   * The parent reads this value from its own `useDeepSeekSession`
+   * instance's `isLoginModalOpen` field. See the file header for
+   * why the modal cannot read it from its own hook instance.
+   */
+  open: boolean;
+
+  /**
+   * Called when the modal should close — by the user clicking
+   * Cancel or the shared Modal's close button, by pressing
+   * Escape, by clicking the backdrop, or by the modal's own
+   * auto-close effect firing after the session becomes live.
+   *
+   * The parent is responsible for actually flipping its
+   * `isLoginModalOpen` flag in response. The typical
+   * implementation is to pass the parent's own
+   * `useDeepSeekSession().closeLoginModal` function directly,
+   * which flips the flag AND fires a fresh check.
+   */
+  onClose: () => void;
+}
+
+// ============================================================
+//  Constants
+// ============================================================
+
+/**
+ * The interval between session checks while the modal is open,
+ * in milliseconds. See the file header's "polling loop" section
+ * for the reasoning behind the 1500 ms value.
+ */
+const POLL_INTERVAL_MS = 1500;
+
+// ============================================================
+//  DeepSeekLoginModal
+// ============================================================
+
+/**
+ * The manual DeepSeek sign-in modal. See the file header for the
+ * modal's responsibilities, its controlled-child contract with
+ * the parent, and the reasoning behind its design choices.
+ */
+export const DeepSeekLoginModal = ({
+  open,
+  onClose,
+}: DeepSeekLoginModalProps) => {
+  // ---- Hook for session state and the check action ----
+  // The modal uses a fresh `useDeepSeekSession()` instance rather
+  // than receiving `session` and `checkNow` as props. The
+  // module-level cache inside the hook is shared across
+  // instances, so the modal's `session` value reflects the same
+  // underlying state the parent observes; the local
+  // `isLoginModalOpen` flag is per-instance and is deliberately
+  // NOT what the modal reads for its own visibility (that comes
+  // from the `open` prop). See the file header for the full
+  // reasoning.
+  const { session, checkNow } = useDeepSeekSession();
+
+  // ---- Polling loop ----
+  // While the modal is open, fire a check immediately and then
+  // every POLL_INTERVAL_MS. The cleanup function clears the
+  // interval whenever the effect re-runs or the component
+  // unmounts, so a closed or unmounted modal never leaves a
+  // background timer running.
+  //
+  // `checkNow` is a stable `useCallback` from the hook (its
+  // only dependency is `applySession`, which itself has empty
+  // deps), so listing it in the dependency array does not cause
+  // the effect to re-run when unrelated state changes. The
+  // effect therefore fires exactly on the `open` transition —
+  // once when the modal opens, and never again until it closes
+  // and reopens.
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    void checkNow();
+    const intervalId = window.setInterval(() => {
+      void checkNow();
+    }, POLL_INTERVAL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [open, checkNow]);
+
+  // ---- Auto-close when the session becomes live ----
+  // The effect watches `session?.live` and requests a close as
+  // soon as it becomes true while the modal is open. The `open`
+  // guard prevents a spurious close when the modal has already
+  // been dismissed but the module-level `session` cache happens
+  // to be live — without the guard, the effect would fire
+  // `onClose()` on every re-render of a closed modal whose
+  // cached session was live, which the parent would interpret
+  // as a new close request on an already-closed modal.
+  //
+  // The optional chaining `session?.live` is required because
+  // `session` is `DeepSeekSessionStatus | null`. A null session
+  // — the state before the first check has resolved — is not
+  // live, and the effect correctly does nothing.
+  useEffect(() => {
+    if (open && session?.live === true) {
+      onClose();
+    }
+  }, [open, session, onClose]);
+
+  // ---- Cancel handler ----
+  // The Cancel button's click handler is the `onClose` callback
+  // directly. Declaring the callback as a `useCallback` here
+  // would be redundant — `onClose` is already a stable
+  // reference supplied by the parent (typically the hook's
+  // `closeLoginModal`, which is itself a `useCallback`). Using
+  // it directly makes the call site a one-line reference.
+  const handleCancel = useCallback((): void => {
+    onClose();
+  }, [onClose]);
+
+  // ---- Render ----
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      variant="info"
+      size="sm"
+      title="Sign in to DeepSeek"
+      footer={
+        <button
+          type="button"
+          onClick={handleCancel}
+          className={
+            'rounded-lg border border-neutral-300 bg-background ' +
+            'px-4 py-2 text-sm font-medium text-text ' +
+            'transition-colors hover:bg-neutral-100 ' +
+            'focus-visible:outline-none ' +
+            'dark:border-neutral-700 dark:hover:bg-neutral-800 ' +
+            'dark:text-neutral-100'
+          }
+        >
+          Cancel
+        </button>
+      }
+    >
+      {/* ---- Icon ---- */}
+      {/* A large, prominent icon above the message gives the
+          modal the visual weight of an interruption — the user
+          needs to look away from the app to sign in, and the
+          modal is the only place they will see that instruction
+          until they return. The icon uses the brand-primary
+          tint, matching the "user's main path forward" semantic
+          that the rest of the app applies to primary actions. */}
+      <div className="mb-5 flex justify-center">
+        <div
+          className={
+            'flex h-14 w-14 items-center justify-center ' +
+            'rounded-2xl bg-primary/10 text-primary ' +
+            'dark:bg-primary-light/10 dark:text-primary-light'
+          }
+        >
+          <LogIn size={28} aria-hidden="true" />
+        </div>
+      </div>
+
+      {/* ---- Heading + instruction ---- */}
+      <div className="mb-5 text-center">
+        <p
+          className={
+            'text-sm font-medium text-text ' +
+            'dark:text-neutral-100'
+          }
+        >
+          Sign in to DeepSeek
+        </p>
+        <p
+          className={
+            'mx-auto mt-2 max-w-xs text-sm leading-relaxed ' +
+            'text-neutral-600 dark:text-neutral-300'
+          }
+        >
+          A Chrome window has opened for you to sign in. Once
+          your session is active, WriteSpeare will continue
+          automatically — you can leave this modal open or close
+          it with Cancel.
+        </p>
+      </div>
+
+      {/* ---- Waiting status ---- */}
+      {/* `role="status"` + `aria-live="polite"` tells a screen
+          reader that the contents of this region change over
+          time and should be announced at the next natural pause.
+          The spinner's animation is the visual equivalent for a
+          sighted user — the message is static, the spinner is
+          what conveys "something is happening". */}
+      <div
+        role="status"
+        aria-live="polite"
+        className={
+          'flex items-center justify-center gap-2 rounded-lg ' +
+          'border border-neutral-200 bg-neutral-50 px-3 py-2 ' +
+          'text-xs text-neutral-600 ' +
+          'dark:border-neutral-800 dark:bg-neutral-900/40 ' +
+          'dark:text-neutral-300'
+        }
+      >
+        <Loader2
+          size={14}
+          className="shrink-0 animate-spin text-primary"
+          aria-hidden="true"
+        />
+        <span>Waiting for you to sign in…</span>
+      </div>
+    </Modal>
+  );
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+/**
+ * The `DeepSeekLoginModal` component as the default export,
+ * matching the convention used by every other component file in
+ * the codebase. The Settings page's DeepSeek tab and the
+ * WriterProgress idle state both import it with the default
+ * form (`import DeepSeekLoginModal from '.../DeepSeekLoginModal.js'`)
+ * when their PR-7 modifications land.
+ */
+export default DeepSeekLoginModal;
+</file>
+
 <file path="apps/desktop/src/features/writer/hooks/useDeepSeekSession.ts">
 /**
  * useDeepSeekSession — the renderer's hook for the DeepSeek session.
@@ -5847,6 +6252,621 @@ export const usePrompts = (): PromptsHookValue => {
 export default usePrompts;
 </file>
 
+<file path="apps/desktop/src/features/writer/ipc/deepseekIPC.ts">
+/**
+ * deepseekIPC — IPC handlers for the DeepSeek session feature.
+ *
+ * Registers the two channels the renderer's
+ * `window.electronAPI.deepseek.*` methods invoke:
+ *
+ *   deepseek:checkSession  — run the "is the session live?" triple
+ *                            check, write the result to the
+ *                            encrypted store's cached
+ *                            `deepseekSessionStatus` field, and
+ *                            return it in the standard envelope.
+ *
+ *   deepseek:openLogin     — ensure the app's persistent-profile
+ *                            Chrome is running, then open a new
+ *                            tab on the DeepSeek chat URL. The
+ *                            user signs in by hand in that tab;
+ *                            the login modal's polling loop
+ *                            (via checkSession) detects when the
+ *                            session becomes live.
+ *
+ * The two channels correspond one-to-one with the two methods
+ * the preload declares on `window.electronAPI.deepseek` —
+ * `checkSession` and `openLogin`. There is no third channel here
+ * and no third preload method; the two sides stay in lockstep by
+ * construction.
+ *
+ * ── Why the checkSession handler writes to the encrypted store ──
+ *
+ *   Two layers cache the session status:
+ *
+ *     1. THE MAIN-PROCESS ENCRYPTED STORE — this handler writes
+ *        to it on every successful check. The store's
+ *        `deepseekSessionStatus` field is the launch-time cache
+ *        that `main/index.ts` reads on cold start, per the
+ *        plan's N2 decision ("check at launch only if Chrome is
+ *        already open").
+ *
+ *     2. THE RENDERER'S MODULE CACHE — the `useDeepSeekSession`
+ *        hook maintains its own module-level cache, independent
+ *        of the store, with a 30-second TTL. That cache is what
+ *        keeps the Settings page's DeepSeek tab from firing a
+ *        check on every remount.
+ *
+ *   The two caches serve different consumers and have different
+ *   lifetimes. The store's cache survives app restarts (it is
+ *   the launch-time input); the renderer's cache lives for the
+ *   app session (it is the UI's read model). Both are populated
+ *   from the same source of truth — this handler's call to
+ *   `sessionCheckService.checkSession()`.
+ *
+ *   A failure to write the store cache is logged but does not
+ *   fail the IPC call. The check itself succeeded; the cache is
+ *   a secondary optimization. The renderer still receives the
+ *   fresh result and renders the correct state.
+ *
+ * ── Why the openLogin handler opens the tab via CDP ────────────
+ *
+ *   Chrome accepts a URL as a positional argument on its command
+ *   line (`chrome.exe <url>`), but the `chromeLauncher` module's
+ *   `launchChrome` API does not expose a way to pass extra
+ *   arguments. Adding that option is not in the plan's PR-7
+ *   scope (the manifest declares no `chromeLauncher` modification
+ *   for this PR), so this handler opens the tab via the Chrome
+ *   DevTools Protocol instead — the same transport the sibling
+ *   `sessionCheckService` already uses.
+ *
+ *   The flow:
+ *
+ *     1. Ensure Chrome is running. If `chromeLauncher` reports
+ *        an existing instance, use its port. Otherwise launch
+ *        one with the app's persistent profile directory — the
+ *        same profile the search, extraction, and writer
+ *        services use, so the DeepSeek login performed in this
+ *        tab persists for every future operation.
+ *
+ *     2. Fetch `http://localhost:<port>/json/version` to obtain
+ *        the browser-level WebSocket debugger URL. The `/json/
+ *        list` endpoint the session check uses gives per-page
+ *        WebSockets; `/json/version` gives the browser-level one
+ *        that exposes the `Target` domain.
+ *
+ *     3. Open a WebSocket to that URL and send a single
+ *        `Target.createTarget` command with the DeepSeek URL.
+ *        Chrome opens a new tab at that URL and replies with the
+ *        new target's id. A non-empty `targetId` in the response
+ *        is the success signal.
+ *
+ *   The `Target.createTarget` path is preferred over Chrome's
+ *   `/json/new?url=...` HTTP endpoint because that endpoint now
+ *   requires a PUT request (a CSRF-mitigation change in Chrome
+ *   111+) and is documented as deprecated. The WebSocket command
+ *   is the modern, future-proof path and requires no HTTP-method
+ *   gymnastics.
+ *
+ * ── Why the profile directory is duplicated from the sibling
+ *    services ────────────────────────────────────────────────────
+ *
+ *   `searchService.ts`, `extractionService.ts`, and
+ *   `writerService.ts` each compute the app's persistent Chrome
+ *   profile path as `<userData>/writespeare-desktop/chrome-profile`
+ *   via a small local helper. The `sessionCheckService.ts` file
+ *   (created in the previous step) does the same.
+ *
+ *   This file follows the same convention. The path is a
+ *   cross-file contract — every service that launches Chrome
+ *   must agree on it, or two of them would launch two Chromes
+ *   with two different profiles and the DeepSeek login would
+ *   only exist in one. The plan declares no shared layout
+ *   constants module for the desktop main process, so the
+ *   contract is documented by the identical comment in every
+ *   file that touches it. A future session that promoted the
+ *   path to a shared helper would update all five files
+ *   together.
+ *
+ * ── Error handling ─────────────────────────────────────────────
+ *
+ *   `checkSession` never rejects — its service contract is
+ *   "always resolve with a result". The handler therefore wraps
+ *   the whole call in a defensive try/catch for the "unexpected
+ *   throw" case (a bug in the service, an out-of-memory during
+ *   the check) and converts it into an error envelope, matching
+ *   the pattern every other IPC module follows.
+ *
+ *   `openLogin` can fail at two points — the Chrome launch and
+ *   the CDP tab-creation call — and each produces a specific
+ *   error message the renderer can surface. A partial success
+ *   (Chrome launched but the tab did not open) reports the tab
+ *   failure; the user can open the DeepSeek URL manually in the
+ *   Chrome window that is now on their desktop.
+ *
+ * ── What this file does NOT do ─────────────────────────────────
+ *
+ *   - It does not poll. The renderer's login modal drives the
+ *     1.5-second polling loop by calling `deepseek:checkSession`
+ *     repeatedly. This handler responds to individual calls.
+ *
+ *   - It does not navigate an EXISTING DeepSeek tab. If a tab on
+ *     `chat.deepseek.com` is already open, `openLogin` still
+ *     creates a new tab — the user is expected to close the
+ *     extra tab if they do not want it. Reusing an existing tab
+ *     would require tracking the target id between calls, which
+ *     is state this stateless handler deliberately does not
+ *     hold.
+ *
+ *   - It does not read the cached status on its own. The
+ *     launch-time read lives in `main/index.ts`; the settings
+ *     banner reads via the renderer's own hook cache, which is
+ *     populated by this handler's return value.
+ *
+ *   - It does not distinguish "the check failed" from "the
+ *     session is not live" in its return envelope. Both produce
+ *     a `live: false` result. See the sibling
+ *     `sessionCheckService.ts` header for the reasoning.
+ *
+ * Dependencies: electron + Node stdlib + the sibling
+ * `sessionCheckService` + the sibling `chromeLauncher` + the
+ * main-process `store` module.
+ */
+
+import { ipcMain, app, type IpcMainInvokeEvent } from 'electron';
+import path from 'node:path';
+
+import {
+  checkSession,
+  type SessionCheckResult,
+} from '../services/sessionCheckService.js';
+import { setDeepSeekSessionStatus } from '../../../main/store.js';
+import {
+  getRunningInstances,
+  launchChrome,
+} from '../../research/services/chromeLauncher.js';
+import type { ApiResponse } from '../../shared/types/index.js';
+
+// ============================================================
+//  Channel name constants
+// ============================================================
+//
+// The two channel names are declared as constants so a future
+// refactor that renames them (or a test that spies on them) has
+// one place to change. The preload's `src/main/preload.ts`
+// declares the same strings on the renderer side of the bridge —
+// the two must stay in sync, but neither file imports from the
+// other, because the preload is a renderer-context module and
+// this file is a main-context module.
+
+const CHANNEL_CHECK_SESSION = 'deepseek:checkSession';
+const CHANNEL_OPEN_LOGIN = 'deepseek:openLogin';
+
+// ============================================================
+//  Layout constants
+// ============================================================
+//
+// Same value every other service that launches Chrome computes.
+// See the file header's "Why the profile directory is
+// duplicated" section for the cross-file contract rationale.
+
+/** The Chrome profile directory name under the app's userData
+ *  folder. The same convention `searchService.ts`,
+ *  `extractionService.ts`, `writerService.ts`, and
+ *  `sessionCheckService.ts` use. */
+const CHROME_PROFILE_DIRNAME = 'chrome-profile';
+
+/**
+ * The DeepSeek URL the openLogin handler navigates Chrome to.
+ *
+ * The root URL of the DeepSeek chat application. Chrome follows
+ * DeepSeek's own redirect to the login wall if the session is
+ * not live; if the session IS live, the root URL lands directly
+ * on the chat page and the user's next action (typing a message,
+ * clicking Generate in the writer) proceeds without a further
+ * navigation.
+ *
+ * Using the root URL rather than a hard-coded `/sign_in` path is
+ * deliberate — DeepSeek's login-wall routing has changed between
+ * path spellings before, and the root URL's redirect is
+ * maintained by DeepSeek itself.
+ */
+const DEEPSEEK_LOGIN_URL = 'https://chat.deepseek.com/';
+
+// ============================================================
+//  CDP timeouts
+// ============================================================
+//
+// Both bounded so a hung CDP endpoint cannot leave an IPC call
+// pending indefinitely. See the file header's "Why the openLogin
+// handler opens the tab via CDP" section for the flow.
+
+/** Timeout for the `/json/version` fetch, in milliseconds. */
+const CDP_VERSION_TIMEOUT_MS = 2_000;
+
+/** Timeout for the browser-level WebSocket round trip, in
+ *  milliseconds. */
+const CDP_BROWSER_COMMAND_TIMEOUT_MS = 2_000;
+
+// ============================================================
+//  Path helper
+// ============================================================
+
+/**
+ * Return the absolute path to the app's persistent Chrome
+ * profile. Same value every other service that launches Chrome
+ * computes. See the file header for the cross-service contract.
+ */
+const getChromeProfilePath = (): string => {
+  return path.join(app.getPath('userData'), CHROME_PROFILE_DIRNAME);
+};
+
+// ============================================================
+//  CDP — browser-level WebSocket URL
+// ============================================================
+
+/**
+ * Fetch Chrome's browser-level WebSocket debugger URL from the
+ * CDP `/json/version` endpoint.
+ *
+ * The endpoint returns a small JSON object describing the running
+ * Chrome; the field of interest is `webSocketDebuggerUrl`,
+ * pointing at the browser-level WebSocket through which the
+ * `Target` domain's commands (including `Target.createTarget`)
+ * are issued.
+ *
+ * Returns `null` on any failure — a non-2xx response, a timeout,
+ * a connection refused, a malformed JSON body, a body that lacks
+ * the `webSocketDebuggerUrl` field. The caller treats a null
+ * return as "cannot open a new tab" and reports the failure to
+ * the renderer.
+ */
+const fetchBrowserWebSocketUrl = async (
+  port: number
+): Promise<string | null> => {
+  const url = `http://localhost:${port}/json/version`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    CDP_VERSION_TIMEOUT_MS
+  );
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      return null;
+    }
+    const parsed: unknown = await response.json();
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return null;
+    }
+    const wsUrl = (parsed as Record<string, unknown>)[
+      'webSocketDebuggerUrl'
+    ];
+    if (typeof wsUrl !== 'string' || wsUrl.length === 0) {
+      return null;
+    }
+    return wsUrl;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+// ============================================================
+//  CDP — send a browser-level command
+// ============================================================
+
+/**
+ * Open a WebSocket to the browser-level CDP endpoint, send one
+ * command, and resolve with the command's `result` object — or
+ * `null` if the round trip fails for any reason.
+ *
+ * The command id is fixed at `1` because exactly one command is
+ * sent per WebSocket connection. The browser-level endpoint
+ * occasionally emits unsolicited events (a `Target.targetCreated`
+ * when another tab opens, for example); a message whose `id` is
+ * not `1` is not the response to our command and is ignored,
+ * with the timeout continuing to run.
+ *
+ * The promise resolves exactly once, on the first of: a matching
+ * response, the timeout firing, an error event, a close event.
+ * The `settled` flag makes the resolution idempotent so a late
+ * event after a timeout does not produce a second resolution.
+ */
+const sendBrowserCommand = (
+  wsUrl: string,
+  method: string,
+  params: Record<string, unknown>
+): Promise<Record<string, unknown> | null> => {
+  return new Promise<Record<string, unknown> | null>((resolve) => {
+    let settled = false;
+    const finish = (value: Record<string, unknown> | null): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(wsUrl);
+    } catch {
+      finish(null);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      try {
+        socket.close();
+      } catch {
+        // Swallow — the socket is already in a bad state.
+      }
+      finish(null);
+    }, CDP_BROWSER_COMMAND_TIMEOUT_MS);
+
+    socket.addEventListener('open', () => {
+      try {
+        socket.send(JSON.stringify({ id: 1, method, params }));
+      } catch {
+        clearTimeout(timer);
+        finish(null);
+      }
+    });
+
+    socket.addEventListener('message', (event: MessageEvent) => {
+      const raw: unknown = event.data;
+      let text: string | null = null;
+      if (typeof raw === 'string') {
+        text = raw;
+      } else if (raw instanceof ArrayBuffer) {
+        text = new TextDecoder().decode(raw);
+      }
+      if (text === null) {
+        return;
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return;
+      }
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
+        return;
+      }
+      const msg = parsed as Record<string, unknown>;
+
+      // Filter out unsolicited events — they carry a `method`
+      // field and either no `id` or an id that is not the one
+      // we sent.
+      if (msg['id'] !== 1) {
+        return;
+      }
+
+      clearTimeout(timer);
+      try {
+        socket.close();
+      } catch {
+        // Swallow — the response is already received, whether
+        // the close succeeds or not does not change the result.
+      }
+
+      const result = msg['result'];
+      if (
+        typeof result !== 'object' ||
+        result === null ||
+        Array.isArray(result)
+      ) {
+        finish(null);
+        return;
+      }
+      finish(result as Record<string, unknown>);
+    });
+
+    socket.addEventListener('error', () => {
+      clearTimeout(timer);
+      finish(null);
+    });
+
+    socket.addEventListener('close', () => {
+      clearTimeout(timer);
+      finish(null);
+    });
+  });
+};
+
+// ============================================================
+//  CDP — open a new tab at a URL
+// ============================================================
+
+/**
+ * Open a new tab at the given URL in the Chrome listening on the
+ * given debug port. Returns `true` on success, `false` on any
+ * failure.
+ *
+ * Flow:
+ *
+ *   1. Fetch the browser-level WebSocket URL from `/json/version`.
+ *   2. Send `Target.createTarget` with `{ url }`.
+ *   3. Check that the response carries a non-empty `targetId`.
+ *
+ * A response with no `targetId` is treated as a failure — the
+ * CDP spec requires the field on success, and its absence means
+ * Chrome did not actually create the tab.
+ */
+const openNewTab = async (
+  port: number,
+  url: string
+): Promise<boolean> => {
+  const wsUrl = await fetchBrowserWebSocketUrl(port);
+  if (wsUrl === null) {
+    return false;
+  }
+
+  const response = await sendBrowserCommand(
+    wsUrl,
+    'Target.createTarget',
+    { url }
+  );
+  if (response === null) {
+    return false;
+  }
+
+  const targetId = response['targetId'];
+  return typeof targetId === 'string' && targetId.length > 0;
+};
+
+// ============================================================
+//  registerDeepSeekIPC
+// ============================================================
+
+/**
+ * Register the DeepSeek feature's IPC handlers.
+ *
+ * Called once, from `main/index.ts`, inside the
+ * `app.whenReady().then(...)` callback — the same place every
+ * other feature's registration function is called. The function
+ * is not idempotent: `ipcMain.handle` refuses to register a
+ * second handler for the same channel, and a second call would
+ * therefore produce Electron errors. The single-call contract is
+ * the same one every other feature's `register*IPC()` function
+ * follows.
+ */
+export const registerDeepSeekIPC = (): void => {
+  // ---- deepseek:checkSession ----
+  //
+  // Run the triple check via the session check service, write
+  // the result to the encrypted store's cached field, and return
+  // it in the standard envelope.
+  //
+  // The service call is wrapped in a defensive try/catch even
+  // though the service's contract is "never throws". A
+  // genuinely unexpected throw from the service (a bug in the
+  // service, an out-of-memory during the CDP evaluate) is
+  // converted into an error envelope rather than an unhandled
+  // rejection in the IPC layer.
+  //
+  // The store write is wrapped in its own try/catch so a write
+  // failure does not discard the freshly computed result. The
+  // caller receives the correct `live` and `checkedAt` values
+  // regardless of whether the cache was updated; the cache is
+  // a launch-time optimization, not the primary purpose of this
+  // call.
+  ipcMain.handle(
+    CHANNEL_CHECK_SESSION,
+    async (
+      _event: IpcMainInvokeEvent
+    ): Promise<ApiResponse<SessionCheckResult>> => {
+      try {
+        const result = await checkSession();
+
+        try {
+          setDeepSeekSessionStatus(result);
+        } catch (cacheErr) {
+          console.error(
+            '[deepseekIPC] failed to cache session status:',
+            cacheErr
+          );
+          // Continue — the check itself succeeded.
+        }
+
+        return { success: true, data: result };
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : String(err);
+        return {
+          success: false,
+          error: `Session check failed: ${message}`,
+        };
+      }
+    }
+  );
+
+  // ---- deepseek:openLogin ----
+  //
+  // Ensure Chrome is running with the app's persistent profile,
+  // then open a new tab on the DeepSeek URL via CDP.
+  //
+  // A failure at either step — the Chrome launch, the tab
+  // creation — is reported with a specific message. If Chrome
+  // was launched but the tab did not open, the error still
+  // reports the tab failure; the user can open the DeepSeek
+  // URL manually in the Chrome window that is now on their
+  // desktop.
+  ipcMain.handle(
+    CHANNEL_OPEN_LOGIN,
+    async (
+      _event: IpcMainInvokeEvent
+    ): Promise<ApiResponse<null>> => {
+      // ---- Step 1: ensure Chrome is running ----
+      let port: number;
+
+      const running = getRunningInstances();
+      const first = running[0];
+
+      if (first !== undefined) {
+        port = first.port;
+      } else {
+        try {
+          const instance = await launchChrome({
+            userDataDir: getChromeProfilePath(),
+          });
+          port = instance.port;
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : String(err);
+          return {
+            success: false,
+            error: `Could not launch Chrome: ${message}`,
+          };
+        }
+      }
+
+      // ---- Step 2: open the DeepSeek tab ----
+      try {
+        const opened = await openNewTab(port, DEEPSEEK_LOGIN_URL);
+        if (!opened) {
+          return {
+            success: false,
+            error:
+              'Could not open the DeepSeek login page in Chrome.',
+          };
+        }
+        return { success: true, data: null };
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : String(err);
+        return {
+          success: false,
+          error: `Could not open the DeepSeek login page: ${message}`,
+        };
+      }
+    }
+  );
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+/**
+ * The registration function as the default export, matching the
+ * convention used by every other IPC module in the codebase.
+ * `main/index.ts` uses the named import
+ * (`import { registerDeepSeekIPC } from ...`), so the default
+ * form is a convenience rather than a load-bearing export.
+ */
+export default registerDeepSeekIPC;
+</file>
+
 <file path="apps/desktop/src/features/writer/ipc/promptsIPC.ts">
 /**
  * promptsIPC — IPC handlers for the writer feature's prompt
@@ -6697,6 +7717,755 @@ export const registerPromptsIPC = (): void => {
  * form is a convenience rather than a load-bearing export.
  */
 export default registerPromptsIPC;
+</file>
+
+<file path="apps/desktop/src/features/writer/services/sessionCheckService.ts">
+/**
+ * sessionCheckService — main-process service that answers
+ * "is the DeepSeek session live?".
+ *
+ * The single consumer-facing export is `checkSession()`, an async
+ * function that returns `{ live: boolean; checkedAt: string }`.
+ * Every one of the three DeepSeek session consumers — the
+ * launch-time check in `main/index.ts`, the writer-run pre-check,
+ * and the Settings page's DeepSeek status banner — calls this one
+ * function and renders or acts on the result.
+ *
+ * ── What "session live" means ────────────────────────────────
+ *
+ *   A live session passes the THREE-SIGNAL check from the plan's
+ *   decision N3:
+ *
+ *     1. The DeepSeek chat page is open in the app's Chrome.
+ *        A tab is present whose URL contains `chat.deepseek.com`.
+ *
+ *     2. The URL is not a login URL. The path segment does not
+ *        contain `/login`, `/signin`, `/sign_in`, `/sign-in`, or
+ *        `/auth/`. If the user is looking at a sign-in page,
+ *        they are not signed in regardless of what the DOM shows.
+ *
+ *     3. No "sign in to continue" text is present in the page's
+ *        body. The phrases checked are `sign in to continue`,
+ *        `log in to continue`, `please sign in`, and
+ *        `please log in`. These are the four phrasings DeepSeek's
+ *        UI has used for its login-wall overlay when the session
+ *        expired mid-use (URL still `/`, but an overlay covers
+ *        the chat input).
+ *
+ *   All three signals are evaluated IN the DeepSeek page's own
+ *   JavaScript context. The page itself is the only authority on
+ *   what its DOM currently contains; the main process cannot
+ *   guess at it from outside.
+ *
+ * ── How the check is performed ───────────────────────────────
+ *
+ *   Chrome's DevTools Protocol exposes two endpoints the service
+ *   uses:
+ *
+ *     * `http://localhost:<port>/json/list` — returns an array
+ *       of every open target (tab) with its URL, title, and a
+ *       per-target WebSocket URL for that page's CDP session.
+ *       Fetched via Node's global `fetch`; used to find the
+ *       DeepSeek page and to obtain its WebSocket URL.
+ *
+ *     * `ws://localhost:<port>/devtools/page/<targetId>` — a
+ *       per-page WebSocket that accepts CDP commands. The
+ *       service sends one `Runtime.evaluate` command with the
+ *       triple-check expression; Chrome evaluates it in the
+ *       page's JavaScript context and returns the result.
+ *
+ *   Node 20+ ships a global `WebSocket` and a global `fetch`, so
+ *   no external dependency is needed. The desktop app's
+ *   `package.json` does not declare a WebSocket library, and
+ *   adding one would be out of scope for this file.
+ *
+ * ── Why CDP over WebSocket and not Playwright ────────────────
+ *
+ *   Playwright is the pipeline's browser-automation library, but
+ *   it is a PYTHON dependency. The desktop main process does not
+ *   ship Playwright, and adding it would pull in a second
+ *   Chromium bundle plus a heavyweight Node-side driver — a
+ *   large addition for one query that CDP serves natively.
+ *
+ *   The Python side still owns every operation that actually
+ *   needs Playwright: the search scripts, the extractors, and
+ *   the writer itself all spawn `python main.py <subcommand>`
+ *   and connect via `core.browser.connect_to_chrome`. This
+ *   service is deliberately separate from that pipeline because
+ *   it must be able to answer its one question without spawning
+ *   a Python process — the Settings banner runs it in the
+ *   background on every mount, and the writer-run pre-check
+ *   needs it to resolve in tens of milliseconds, not the
+ *   hundreds a Python spawn would take.
+ *
+ * ── The `launchIfNotRunning` option ─────────────────────────
+ *
+ *   The service exposes one option on its options parameter:
+ *
+ *     launchIfNotRunning?: boolean
+ *
+ *   Its default is `false`. When false and Chrome is not already
+ *   running, the service returns `{ live: false, checkedAt }`
+ *   immediately — no launch is attempted, no side effects.
+ *
+ *   The default is `false` because two of the three consumers
+ *   must NOT launch Chrome on their own:
+ *
+ *     * The launch-time check in `main/index.ts` follows the
+ *       plan's N2 decision ("Check at launch only if Chrome is
+ *       already open") and should not spawn a new Chrome just
+ *       to look at it.
+ *
+ *     * The Settings page's banner checks on mount and would
+ *       otherwise pop a Chrome window every time the user opens
+ *       Settings — an intrusive surprise.
+ *
+ *   The third consumer — the writer-run pre-check — is the only
+ *   one that WANTS Chrome up before the check runs, because the
+ *   writer step is about to need Chrome anyway. It passes
+ *   `{ launchIfNotRunning: true }` explicitly.
+ *
+ *   The manifest's line for this file reads "launches or attaches
+ *   to Chrome", which is the behavior the option enables. The
+ *   option's default leans on the "attaches" half of that phrase
+ *   for the common case, and the "launches" half is opt-in.
+ *
+ * ── Timeouts ──────────────────────────────────────────────────
+ *
+ *   Both the HTTP list fetch and the WebSocket evaluate are
+ *   bounded. A hung CDP endpoint (a Chrome that has been killed
+ *   mid-check, a socket that is not accepting reads) must not
+ *   leave this function pending forever, because its callers
+ *   include the launch-time path that runs before the app's
+ *   main window has rendered.
+ *
+ *   The HTTP fetch uses an `AbortController` with a 2-second
+ *   timeout. The WebSocket uses a 3-second timer that closes
+ *   the socket and resolves the promise with a not-live result.
+ *   Both are generous for a localhost round trip — the nominal
+ *   case completes in single-digit milliseconds — while
+ *   remaining short enough that a hung endpoint does not stall
+ *   the caller noticeably.
+ *
+ * ── What this service does NOT do ────────────────────────────
+ *
+ *   - It does not navigate Chrome. If Chrome is running but no
+ *     DeepSeek tab is open, the service reports not-live. The
+ *     act of navigating to the DeepSeek chat page is the login
+ *     flow's job, driven by `deepseek:openLogin` on the IPC
+ *     layer.
+ *
+ *   - It does not distinguish "the check failed" from "the
+ *     session is not live" in its return value. Both produce
+ *     `{ live: false, checkedAt }`. The distinction matters for
+ *     logging, not for the caller's UI: the caller either shows
+ *     the sign-in CTA or does not, and a failed check has the
+ *     same user-facing consequence as a checked-and-negative
+ *     one.
+ *
+ *   - It does not cache. Each call performs a fresh check. The
+ *     caller that wants caching (the renderer's session hook)
+ *     implements it at its own layer; the service stays a
+ *     stateless "ask the current question" function.
+ *
+ *   - It does not poll. The renderer's login modal polls this
+ *     service's IPC channel on a 1.5-second interval while the
+ *     modal is open; the service itself does not schedule
+ *     repeated calls.
+ *
+ *   - It does not persist its result. The IPC handler that calls
+ *     this service is what writes to the encrypted store's
+ *     `deepseekSessionStatus` cache field.
+ *
+ *   - It does not emit markers. The check is a request-response
+ *     operation with no progress to stream — the entire
+ *     inspection completes in under a second in every
+ *     realistic case.
+ *
+ * Dependencies: electron (for `app.getPath('userData')`),
+ * `node:path`, and the sibling `research/services/chromeLauncher`
+ * module. Node globals `fetch`, `AbortController`, `WebSocket`,
+ * and `TextDecoder` are all available in the Electron main
+ * process runtime.
+ */
+
+import { app } from 'electron';
+import path from 'node:path';
+
+import {
+  getRunningInstances,
+  launchChrome,
+} from '../../research/services/chromeLauncher.js';
+
+// ============================================================
+//  Public types
+// ============================================================
+
+/**
+ * The result of a session check. Every call to `checkSession`
+ * resolves with one of these — never throws, never returns null.
+ *
+ * The `checkedAt` timestamp is always populated, even when the
+ * check could not be performed. That is deliberate: the caller's
+ * UI shows the timestamp as "Last checked <time>", and a
+ * timestamp that is present but coupled with `live: false` is
+ * more informative than a null timestamp that would force the
+ * caller to render a "never checked" state it does not have.
+ */
+export interface SessionCheckResult {
+  /**
+   * True when all three signals of the triple check passed. See
+   * the file header for the exact criteria.
+   */
+  live: boolean;
+
+  /**
+   * An ISO-8601 timestamp for when the check completed. Always
+   * populated, including on the not-live path.
+   */
+  checkedAt: string;
+}
+
+/**
+ * The options accepted by `checkSession`. Both fields are
+ * optional; the default behavior is documented on each.
+ */
+export interface SessionCheckOptions {
+  /**
+   * When true and Chrome is not currently running, launch a
+   * fresh instance (with the app's persistent chrome-profile
+   * directory) before running the check.
+   *
+   * Defaults to `false`. See the file header's
+   * "The `launchIfNotRunning` option" section for the reasoning
+   * behind the default and the list of which consumers opt in.
+   */
+  launchIfNotRunning?: boolean;
+}
+
+// ============================================================
+//  Internal types
+// ============================================================
+
+/**
+ * One entry in Chrome's CDP target list, narrowed to the fields
+ * this service reads. Every field is present in the real
+ * `/json/list` response — the narrow shape exists so the
+ * consumers of this type do not have to handle a wider one.
+ */
+interface CdpTarget {
+  id: string;
+  type: string;
+  title: string;
+  url: string;
+  webSocketDebuggerUrl?: string;
+}
+
+// ============================================================
+//  Constants
+// ============================================================
+
+/**
+ * The DeepSeek hostname whose presence in a tab's URL marks the
+ * tab as a candidate for the session check.
+ *
+ * Substring match against the tab's URL — a tab at
+ * `https://chat.deepseek.com/`, `https://chat.deepseek.com/a/...`,
+ * or `https://chat.deepseek.com/login` all match. The URL path
+ * check (below) is what distinguishes a chat page from a login
+ * page within the matching tab.
+ */
+const DEEPSEEK_HOSTNAME = 'chat.deepseek.com';
+
+/**
+ * The URL path fragments that indicate a sign-in or auth page.
+ * A DeepSeek tab whose URL contains any of these is not the chat
+ * page and its session cannot be live.
+ *
+ * The list covers every variant DeepSeek has shipped:
+ *   /login      — the classic path
+ *   /signin     — an alternate spelling used on some landing pages
+ *   /sign_in    — the underscore-separated variant
+ *   /sign-in    — the hyphen-separated variant
+ *   /auth/      — a generic auth namespace DeepSeek uses for its
+ *                 OAuth callback path
+ */
+const LOGIN_URL_FRAGMENTS: readonly string[] = [
+  '/login',
+  '/signin',
+  '/sign_in',
+  '/sign-in',
+  '/auth/',
+];
+
+/**
+ * The HTTP timeout for the `/json/list` fetch, in milliseconds.
+ * See the file header's "Timeouts" section for the reasoning.
+ */
+const CDP_HTTP_TIMEOUT_MS = 2_000;
+
+/**
+ * The WebSocket timeout for the `Runtime.evaluate` round trip, in
+ * milliseconds. See the file header's "Timeouts" section for the
+ * reasoning.
+ */
+const CDP_WS_TIMEOUT_MS = 3_000;
+
+/**
+ * The Chrome profile directory name under the app's userData
+ * folder. The same convention every other service that launches
+ * Chrome uses (`searchService.ts`, `extractionService.ts`,
+ * `writerService.ts`), so a Chrome launched by any of them shares
+ * the same DeepSeek session with a Chrome launched by this one.
+ */
+const CHROME_PROFILE_DIRNAME = 'chrome-profile';
+
+/**
+ * The triple-check expression, evaluated inside the DeepSeek
+ * page's own JavaScript context via CDP `Runtime.evaluate`.
+ *
+ * Written as an IIFE that returns a JSON-serializable object.
+ * The `returnByValue: true` flag on the CDP command tells Chrome
+ * to serialize the return value (rather than a remote object
+ * reference), so the service receives the plain object directly.
+ *
+ * The `try/catch` inside the IIFE is a defensive guard against
+ * a page that is mid-navigation when the expression runs — a
+ * `document.body === null` state during the brief window between
+ * a top-level navigation and the body being attached. In that
+ * window, the expression should report not-live rather than
+ * throw, because the throw would be indistinguishable from a
+ * legitimate check failure at the CDP layer.
+ *
+ * The expression avoids regular expressions — plain `indexOf`
+ * checks are unambiguous, do not depend on any escaping rules,
+ * and cannot be defeated by a regex-metacharacter in a URL.
+ */
+const CHECK_EXPRESSION = `
+(function () {
+  try {
+    var hasChatInput =
+      document.querySelector('textarea') !== null ||
+      document.querySelector('[contenteditable="true"]') !== null;
+
+    var href = window.location.href;
+    var isLoginUrl =
+      href.indexOf('/login') !== -1 ||
+      href.indexOf('/signin') !== -1 ||
+      href.indexOf('/sign_in') !== -1 ||
+      href.indexOf('/sign-in') !== -1 ||
+      href.indexOf('/auth/') !== -1;
+
+    var bodyText = '';
+    if (document.body && typeof document.body.innerText === 'string') {
+      bodyText = document.body.innerText.toLowerCase();
+    }
+    var hasSignInText =
+      bodyText.indexOf('sign in to continue') !== -1 ||
+      bodyText.indexOf('log in to continue') !== -1 ||
+      bodyText.indexOf('please sign in') !== -1 ||
+      bodyText.indexOf('please log in') !== -1;
+
+    return {
+      live: hasChatInput && !isLoginUrl && !hasSignInText,
+      hasChatInput: hasChatInput,
+      isLoginUrl: isLoginUrl,
+      hasSignInText: hasSignInText,
+      url: href
+    };
+  } catch (err) {
+    return { live: false, error: String(err) };
+  }
+})()
+`;
+
+// ============================================================
+//  Path helper
+// ============================================================
+
+/**
+ * Return the absolute path to the app's persistent Chrome
+ * profile. The same value every other service that launches
+ * Chrome computes — see the file header's `CHROME_PROFILE_DIRNAME`
+ * note for the cross-service contract.
+ */
+const getChromeProfilePath = (): string => {
+  return path.join(app.getPath('userData'), CHROME_PROFILE_DIRNAME);
+};
+
+// ============================================================
+//  Chrome launch / attach
+// ============================================================
+
+/**
+ * Return the debug port of a running Chrome instance, launching
+ * one if needed and the caller allows it.
+ *
+ * The returned promise resolves with a port number when a Chrome
+ * is available (either pre-existing or freshly launched) or with
+ * `null` when Chrome is not running and `launchIfNotRunning` is
+ * false. It never rejects — a launch failure is logged and
+ * treated identically to "Chrome is not running".
+ *
+ * The function is the sole place in this module that talks to
+ * `chromeLauncher`. Everything downstream of it works with a
+ * plain port number and does not need to know whether the Chrome
+ * it is talking to was already running or was launched by this
+ * call.
+ */
+const resolveChromePort = async (
+  launchIfNotRunning: boolean
+): Promise<number | null> => {
+  const running = getRunningInstances();
+  const first = running[0];
+  if (first !== undefined) {
+    return first.port;
+  }
+
+  if (!launchIfNotRunning) {
+    return null;
+  }
+
+  try {
+    const instance = await launchChrome({
+      userDataDir: getChromeProfilePath(),
+    });
+    return instance.port;
+  } catch (err) {
+    console.error(
+      '[sessionCheckService] could not launch Chrome:',
+      err
+    );
+    return null;
+  }
+};
+
+// ============================================================
+//  CDP — HTTP target list
+// ============================================================
+
+/**
+ * Fetch Chrome's CDP target list and return the entries that
+ * describe a page target.
+ *
+ * The list endpoint is `http://localhost:<port>/json/list`. Its
+ * response is a JSON array of target descriptors — one per open
+ * tab, service worker, extension background page, and so on. The
+ * filter to `type === 'page'` narrows the list to actual browser
+ * tabs, which are the only targets the DeepSeek session check
+ * can be attached to.
+ *
+ * Returns an empty array on any failure — a non-2xx response, a
+ * timeout, a connection refused (the port is bound but Chrome
+ * has exited), a response body that does not parse as JSON, or a
+ * parsed value that is not an array. Every one of those cases
+ * means "no usable target list", and the caller treats it as
+ * not-live. The function never throws.
+ */
+const fetchCdpPageTargets = async (
+  port: number
+): Promise<CdpTarget[]> => {
+  const url = `http://localhost:${port}/json/list`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    CDP_HTTP_TIMEOUT_MS
+  );
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      return [];
+    }
+    const parsed: unknown = await response.json();
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const targets: CdpTarget[] = [];
+    for (const entry of parsed) {
+      if (typeof entry !== 'object' || entry === null) {
+        continue;
+      }
+      const e = entry as Record<string, unknown>;
+      if (e['type'] !== 'page') {
+        continue;
+      }
+      const id = e['id'];
+      const entryUrl = e['url'];
+      if (typeof id !== 'string' || typeof entryUrl !== 'string') {
+        continue;
+      }
+      const title = typeof e['title'] === 'string' ? e['title'] : '';
+      const wsUrl = e['webSocketDebuggerUrl'];
+      const target: CdpTarget = {
+        id,
+        type: 'page',
+        title,
+        url: entryUrl,
+      };
+      if (typeof wsUrl === 'string' && wsUrl.length > 0) {
+        target.webSocketDebuggerUrl = wsUrl;
+      }
+      targets.push(target);
+    }
+    return targets;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+// ============================================================
+//  CDP — WebSocket evaluate
+// ============================================================
+
+/**
+ * Open a CDP WebSocket to a page target and evaluate a JavaScript
+ * expression in that page's context. Returns the expression's
+ * return value (deserialized by CDP's `returnByValue`), or `null`
+ * if the round trip fails for any reason.
+ *
+ * The promise resolves exactly once. Four terminal conditions are
+ * covered, and the first one to fire wins:
+ *
+ *   1. A message arrives with the matching command id and a
+ *      `result.result.value` field — the normal success path.
+ *      The value is resolved.
+ *
+ *   2. A message arrives with the matching command id and an
+ *      `exceptionDetails` field — the expression threw inside
+ *      the page. `null` is resolved.
+ *
+ *   3. The timeout fires. The socket is closed and `null` is
+ *      resolved.
+ *
+ *   4. The socket emits an `error` or `close` event before a
+ *      message is seen. `null` is resolved.
+ *
+ * The command id is a fixed `1` because exactly one command is
+ * sent per WebSocket connection. A future session that needed to
+ * multiplex commands over one socket would replace this constant
+ * with a counter; today the fixed value is the honest shape.
+ */
+const evaluateInPage = (
+  webSocketDebuggerUrl: string,
+  expression: string
+): Promise<unknown> => {
+  return new Promise<unknown>((resolve) => {
+    let settled = false;
+    const finish = (value: unknown): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    // A malformed WebSocket URL — the CDP response carried a
+    // string we cannot connect to — resolves to null rather than
+    // throwing. The caller reports not-live, which is the
+    // correct answer for a browser that cannot be reached.
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(webSocketDebuggerUrl);
+    } catch {
+      finish(null);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      try {
+        socket.close();
+      } catch {
+        // Swallow — the socket is already in a bad state.
+      }
+      finish(null);
+    }, CDP_WS_TIMEOUT_MS);
+
+    socket.addEventListener('open', () => {
+      const command = {
+        id: 1,
+        method: 'Runtime.evaluate',
+        params: {
+          expression,
+          returnByValue: true,
+          awaitPromise: false,
+        },
+      };
+      try {
+        socket.send(JSON.stringify(command));
+      } catch {
+        clearTimeout(timer);
+        finish(null);
+      }
+    });
+
+    socket.addEventListener('message', (event: MessageEvent) => {
+      clearTimeout(timer);
+      const raw: unknown = event.data;
+      let text: string | null = null;
+      if (typeof raw === 'string') {
+        text = raw;
+      } else if (raw instanceof ArrayBuffer) {
+        text = new TextDecoder().decode(raw);
+      }
+      if (text === null) {
+        finish(null);
+        return;
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        finish(null);
+        return;
+      }
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
+        finish(null);
+        return;
+      }
+      const msg = parsed as Record<string, unknown>;
+      if (msg['id'] !== 1) {
+        // A message for a different command — the CDP session
+        // sends unsolicited events the reader is not interested
+        // in. Ignore them.
+        return;
+      }
+      const result = msg['result'];
+      if (
+        typeof result !== 'object' ||
+        result === null ||
+        Array.isArray(result)
+      ) {
+        finish(null);
+        return;
+      }
+      const r = result as Record<string, unknown>;
+      if ('exceptionDetails' in r) {
+        finish(null);
+        return;
+      }
+      const inner = r['result'];
+      if (
+        typeof inner !== 'object' ||
+        inner === null ||
+        Array.isArray(inner)
+      ) {
+        finish(null);
+        return;
+      }
+      const innerObj = inner as Record<string, unknown>;
+      if (!('value' in innerObj)) {
+        finish(null);
+        return;
+      }
+      finish(innerObj['value']);
+    });
+
+    socket.addEventListener('error', () => {
+      clearTimeout(timer);
+      finish(null);
+    });
+
+    socket.addEventListener('close', () => {
+      clearTimeout(timer);
+      finish(null);
+    });
+  });
+};
+
+// ============================================================
+//  Public entry point
+// ============================================================
+
+/**
+ * Answer "is the DeepSeek session live?" and return the result
+ * with a timestamp. See the file header for the full description
+ * of the triple check, the CDP transport, and the option's
+ * semantics.
+ *
+ * The function never throws. Every failure mode — Chrome not
+ * running, no DeepSeek tab, a CDP HTTP timeout, a CDP WebSocket
+ * timeout, an exception thrown by the evaluated expression inside
+ * the page — resolves to `{ live: false, checkedAt }`.
+ *
+ * @param options - Optional configuration. See
+ *                  `SessionCheckOptions` for the fields and the
+ *                  `launchIfNotRunning` default.
+ */
+export const checkSession = async (
+  options?: SessionCheckOptions
+): Promise<SessionCheckResult> => {
+  const checkedAt = new Date().toISOString();
+  const launchIfNotRunning = options?.launchIfNotRunning === true;
+
+  // ---- 1. Ensure a Chrome is available to check ----
+  const port = await resolveChromePort(launchIfNotRunning);
+  if (port === null) {
+    return { live: false, checkedAt };
+  }
+
+  // ---- 2. Enumerate Chrome's open tabs ----
+  const targets = await fetchCdpPageTargets(port);
+  if (targets.length === 0) {
+    return { live: false, checkedAt };
+  }
+
+  // ---- 3. Find a DeepSeek tab ----
+  // The filter is a case-insensitive substring match against the
+  // tab's URL. The login-URL check is NOT performed here — it is
+  // one of the three signals the check expression evaluates
+  // inside the page, and doing it here as well would create a
+  // second source of truth for the same rule.
+  const deepseekTarget = targets.find((t) => {
+    return t.url.toLowerCase().indexOf(DEEPSEEK_HOSTNAME) !== -1;
+  });
+  if (
+    deepseekTarget === undefined ||
+    deepseekTarget.webSocketDebuggerUrl === undefined
+  ) {
+    return { live: false, checkedAt };
+  }
+
+  // ---- 4. Run the triple check inside the page ----
+  const result = await evaluateInPage(
+    deepseekTarget.webSocketDebuggerUrl,
+    CHECK_EXPRESSION
+  );
+
+  if (
+    typeof result !== 'object' ||
+    result === null ||
+    Array.isArray(result)
+  ) {
+    return { live: false, checkedAt };
+  }
+  const r = result as Record<string, unknown>;
+  const live = r['live'] === true;
+
+  return { live, checkedAt };
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+/**
+ * Every export bundled under one default object, matching the
+ * convention used by the sibling main-process services
+ * (`searchService.ts`, `extractionService.ts`, `writerService.ts`,
+ * `chromeLauncher.ts`). A caller that prefers named imports uses
+ * `import { checkSession } from ...`; a caller that prefers the
+ * default form uses `import sessionCheckService from ...` and
+ * destructures.
+ */
+export default {
+  checkSession,
+};
 </file>
 
 <file path="apps/desktop/src/resources/scripts/migrations/.gitkeep">
@@ -7744,6 +9513,406 @@ if __name__ == "__main__":
 
 <file path="apps/desktop/src/resources/scripts/README.md">
 
+</file>
+
+<file path="apps/desktop/src/resources/scripts/validate_prompt.py">
+#!/usr/bin/env python3
+"""
+validate_prompt.py — standalone Jinja2 prompt-template validator.
+
+Reads a candidate prompt template from disk, attempts to construct
+a Jinja2 `Template` from its contents and render it with a small
+set of dummy variables, and reports the outcome as a single JSON
+line on stdout. Exits with 0 when the template is valid, 1 when
+it is not.
+
+This script is the validator the desktop app spawns when the user
+clicks Save in the Prompts editor. See `promptsIPC.ts`'s
+`prompts:validate` handler for the caller side: it writes the
+candidate content to a temporary file, invokes this script with
+the temp file's path as the single argument, reads the script's
+last non-empty stdout line as JSON, and returns the parsed result
+to the renderer.
+
+Command-line contract
+---------------------
+
+    python validate_prompt.py <prompt-file-path>
+
+Arguments:
+
+    <prompt-file-path>  — the absolute path to the file to
+                          validate. Must be a file that exists
+                          and is readable.
+
+Stdout on success (exit code 0):
+
+    {"valid": true}
+
+Stdout on failure (exit code 1):
+
+    {"valid": false, "error": "<message>", "line": <N>}
+
+    `line` is a 1-based line number when the error carries one
+    (Jinja2's `TemplateSyntaxError` for an unclosed block, a
+    malformed `{% %}` tag, an unknown filter, and so on all
+    carry a `.lineno`). When no line number is available — a
+    file-not-found error, an encoding failure, a generic
+    exception — `line` is 0. The IPC handler treats 0 as
+    "no line number", which is what the renderer expects when
+    it renders the error banner without a line anchor.
+
+Stdout on usage error (exit code 1):
+
+    {"valid": false, "error": "Usage: validate_prompt.py <prompt-file-path>", "line": 0}
+
+    A missing argument, or more than one argument, produces this
+    line. The script does not read stdin; it does not offer any
+    other modes.
+
+The script never prints anything on stdout EXCEPT the final JSON
+line. A traceback, if one ever escapes the top-level handler,
+goes to stderr; the IPC handler's parse takes the LAST non-empty
+stdout line, so stderr output cannot confuse the parse.
+
+Why a standalone script and not inline Python
+---------------------------------------------
+
+    The desktop main process is Node. Jinja2 is a Python library.
+    Calling Jinja2 from the main process therefore requires
+    spawning Python. The alternative — reimplementing Jinja2's
+    parser in TypeScript — would be a second parser that would
+    inevitably disagree with the real one on the day a template
+    used an edge-case construct. The standalone script keeps the
+    validation authoritative: it uses the same Jinja2 that the
+    writer step uses when it renders the template for real.
+
+    The script is deliberately tiny (a single argument, a single
+    output line, no state) so that the spawn cost — a few hundred
+    milliseconds of Python startup — is the only cost. It does
+    not import `core.*`, does not import any WriteSpeare module,
+    and does not depend on the pipeline's layout. It could be run
+    by hand from a terminal as a diagnostic.
+
+Why the dummy variables are a superset of the real ones
+-------------------------------------------------------
+
+    A Jinja2 template that references a variable the renderer
+    did not supply renders the variable as an empty string (the
+    default `Undefined` class). The syntax check would therefore
+    pass a template that says `{{ nonexistent_variable }}` — but
+    in practice, the writer supplies a fixed and known set of
+    variables, and a template that references a name outside that
+    set is a user error the validator should catch.
+
+    This script does NOT catch that class of error. Catching it
+    would require a hard-coded whitelist of variable names, and a
+    whitelist would drift the moment the writer's variable set
+    changed. The validation-on-save contract the plan describes
+    is "is this valid Jinja2", not "does this reference a
+    variable the writer will supply" — the two are different
+    questions, and this script answers only the first.
+
+    The dummy variables below exist so that templates which use
+    the standard variables — the ones the writer DOES supply —
+    render without undefined-value surprises during the check.
+    Supplying them costs nothing and makes the check's output
+    more predictable for the common case. A template that
+    references an unknown name still passes, because Jinja2's
+    default undefined behavior is to substitute empty string.
+
+Why the `line` field is 0 when no line is available
+---------------------------------------------------
+
+    The renderer's error banner reads `line` and formats the
+    message as "Line N: <error>" when N > 0, or just "<error>"
+    when N == 0. Rendering "Line 0:" for an encoding error or a
+    file-not-found would be misleading. Using 0 as the sentinel
+    is simpler than a nullable field — the JSON always carries
+    the field, the renderer always reads it, and the display
+    logic is a single comparison.
+
+Why no `__all__`
+----------------
+
+    This is a runnable script, not an importable module. Nothing
+    imports from it. `__all__` is a name for package authors to
+    publish a public surface; a script that runs and exits has
+    no public surface to publish.
+
+Why no `if __name__ == "__main__":` guard
+------------------------------------------
+
+    The file has one purpose: to be run as a script. There is no
+    case where it would be imported by another module. The guard
+    would be dead code — the script always runs, and the `main`
+    function always executes. The alternative — wrapping the
+    body in a `main()` and calling it under the guard — adds a
+    function indirection for no benefit. The direct top-level
+    form is the honest shape for what this file is.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+from jinja2 import Template
+from jinja2.exceptions import TemplateError
+
+
+# =============================================================================
+#  Dummy variables
+# =============================================================================
+#
+#  The variable names the writer step supplies when it renders a
+#  prompt for real. Providing them to the validator's render call
+#  means a template that uses any of them renders as it would in
+#  production, rather than substituting an empty string for the
+#  supplied value. That property matters for one specific case:
+#  a template that does arithmetic or string manipulation on a
+#  variable — `{{ word_count * 2 }}`, `{{ title | upper }}` —
+#  behaves the same under the dummy render as it would under a
+#  real render. A template that does NOT reference any of these
+#  variables is also fine; the dummy render simply ignores the
+#  unused ones.
+#
+#  The values are chosen to be representative in type:
+#
+#    title         — a non-empty string
+#    keywords      — a list of strings
+#    word_count    — an integer
+#    tone          — a non-empty string
+#    sources       — a list of strings (the source file names)
+#    source_count  — an integer
+#    topic_id      — a non-empty string
+#
+#  Every name is a real variable the writer supplies. No name is
+#  invented. A future session that adds a variable to the writer
+#  should add a corresponding entry here in the same change; the
+#  cost of adding it is one line, and the benefit is that the
+#  validator stays in step with the pipeline it validates against.
+
+_DUMMY_VARIABLES: dict[str, object] = {
+    "title": "Sample Topic Title",
+    "keywords": ["sample keyword one", "sample keyword two"],
+    "word_count": 1200,
+    "tone": "blog-post",
+    "sources": ["001-sample-source.md", "002-sample-source.md"],
+    "source_count": 2,
+    "topic_id": "sample-topic-id",
+}
+
+
+# =============================================================================
+#  Result emission
+# =============================================================================
+
+def _emit(result: dict) -> None:
+    """
+    Write a single JSON line to stdout.
+
+    The output is flushed immediately so the parent process — the
+    desktop main process's `promptsIPC.ts` handler, which reads
+    the script's stdout through a pipe — receives the line the
+    moment it is written, without waiting for the process to exit.
+    Without the flush, a parent that reads stdout on the `exit`
+    event would still get the line (the pipe buffer is flushed on
+    process termination), but a parent that reads stdout line by
+    line would see nothing until the process was already gone.
+    The explicit flush makes the behavior independent of how the
+    parent reads.
+
+    The serialization uses compact separators (`(',', ':')`) so
+    the line stays on one line. The default `json.dumps` output
+    uses `', '` and `': '` separators, which are harmless — the
+    line is still a single line — but the compact form makes the
+    output byte-for-byte predictable for a caller that wants to
+    compare it against an expected string, and it is what every
+    other structured output in this codebase uses.
+
+    `ensure_ascii=False` preserves any non-ASCII characters in an
+    error message literally rather than escaping them to
+    `\\uXXXX`. A Jinja2 error that names a filter with a non-ASCII
+    character (rare but possible) would remain readable.
+
+    The function is total — it cannot raise for any input the
+    caller passes, because `json.dumps` on a dict of strings and
+    numbers cannot fail.
+    """
+    sys.stdout.write(
+        json.dumps(result, separators=(",", ":"), ensure_ascii=False)
+    )
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+# =============================================================================
+#  Error classification
+# =============================================================================
+
+def _line_number_of(exc: BaseException) -> int:
+    """
+    Return the 1-based line number an exception carries, or 0
+    when no line number is available.
+
+    Jinja2's `TemplateSyntaxError` — the class of error raised
+    for an unclosed `{% block %}`, a malformed `{{ }}`, an
+    unknown filter, a stray `{% endfor %}`, and every other
+    parse-time or compile-time failure — carries the source
+    line as an integer attribute named `lineno`. The attribute
+    is 1-based, matching the numbering the renderer's error
+    banner displays.
+
+    Other exception classes — `UnicodeDecodeError` from a file
+    that is not valid UTF-8, `OSError` from a missing or
+    unreadable file, `ValueError` from a pathological input —
+    have no line number. The function returns 0 for those, which
+    the renderer treats as "no line anchor".
+
+    The `getattr` chain and the `isinstance` check are both
+    required. `lineno` is not part of the `TemplateError` base
+    class's typed surface; a plain `exc.lineno` would be a type
+    error under mypy, and a `getattr(exc, 'lineno', 0)` without
+    the isinstance check would return a non-integer if some
+    future exception class happened to have an unrelated
+    `lineno` attribute of a different type. The explicit check
+    is the correct boundary.
+    """
+    lineno = getattr(exc, "lineno", None)
+    if isinstance(lineno, int) and lineno > 0:
+        return lineno
+    return 0
+
+
+# =============================================================================
+#  Entry point
+# =============================================================================
+
+def main() -> int:
+    """
+    Validate the file named by `sys.argv[1]` and return the
+    process exit code.
+
+    The function is not called from anywhere; the module's body
+    below executes it directly at import time. The return value
+    is passed to `sys.exit`, which is what sets the process's
+    exit code.
+
+    Flow:
+
+      1. Read `sys.argv[1]`. If it is absent — the caller
+         invoked the script with no argument — emit the usage
+         error and return 1.
+
+      2. Read the file's contents. A missing file, a directory
+         in the file's place, or a permissions failure raises
+         an `OSError`; a non-UTF-8 file raises `UnicodeDecodeError`.
+         Both are caught and reported as validation failures
+         with `line: 0` — from the caller's perspective, "the
+         file could not be read" and "the template is invalid"
+         are the same kind of answer: the file is not usable
+         as a prompt template.
+
+      3. Attempt to construct a `Template` and render it with
+         the dummy variables. `TemplateError` subclasses cover
+         every failure Jinja2 can raise during construction or
+         rendering — a syntax error, an unknown filter, an
+         unknown test, an undefined-followed-by-operation error
+         on a `StrictUndefined` (which this script does not use,
+         so the class of error does not arise in practice but is
+         still caught defensively).
+
+      4. Any OTHER exception — a bug in the validator itself, a
+         memory error, an unexpected import failure — is caught
+         by a broad `except Exception` and reported as a
+         validation failure. The alternative — letting the
+         exception escape and produce a non-JSON traceback on
+         stderr with a non-zero exit — would leave the IPC
+         handler's JSON parse to fail on empty stdout, and the
+         handler would surface a generic "validator failed"
+         message. The broad catch produces a specific message
+         instead, at the cost of two lines of extra code.
+    """
+    # ---- 1. Argument check ----
+    if len(sys.argv) != 2:
+        _emit(
+            {
+                "valid": False,
+                "error": "Usage: validate_prompt.py <prompt-file-path>",
+                "line": 0,
+            }
+        )
+        return 1
+
+    prompt_path = Path(sys.argv[1])
+
+    # ---- 2. Read the file ----
+    try:
+        content = prompt_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        _emit(
+            {
+                "valid": False,
+                "error": f"Could not read the prompt file: {exc}",
+                "line": 0,
+            }
+        )
+        return 1
+    except UnicodeDecodeError as exc:
+        _emit(
+            {
+                "valid": False,
+                "error": f"Prompt file is not valid UTF-8: {exc}",
+                "line": 0,
+            }
+        )
+        return 1
+
+    # ---- 3. Attempt the Jinja2 parse + render ----
+    try:
+        template = Template(content)
+        # The render is what actually triggers a full parse of the
+        # template body. `Template(content)` alone performs some
+        # lazy work; the render is what walks every token and
+        # raises on a malformed tag, an unclosed block, or an
+        # unknown filter reference.
+        template.render(**_DUMMY_VARIABLES)
+    except TemplateError as exc:
+        _emit(
+            {
+                "valid": False,
+                "error": str(exc) or type(exc).__name__,
+                "line": _line_number_of(exc),
+            }
+        )
+        return 1
+    except Exception as exc:
+        # Defensive catch — see the function docstring's step 4.
+        _emit(
+            {
+                "valid": False,
+                "error": str(exc) or type(exc).__name__,
+                "line": 0,
+            }
+        )
+        return 1
+
+    # ---- 4. Success ----
+    _emit({"valid": True})
+    return 0
+
+
+# =============================================================================
+#  Bootstrap
+# =============================================================================
+#
+#  The script runs `main()` immediately on import, matching the
+#  convention established by every other runnable script in this
+#  codebase (`main.py`, `debug_deepseek.py`). See the module
+#  docstring's "Why no `if __name__ == '__main__'` guard" note
+#  for the reasoning.
+
+sys.exit(main())
 </file>
 
 <file path="apps/desktop/.gitattributes">
@@ -37504,384 +39673,6 @@ export const registerProtocolHandlers = (): void => {
     }
   });
 };
-</file>
-
-<file path="apps/desktop/src/main/store.ts">
-/**
- * Local persistent store for the WriteSpeare desktop app.
- *
- * This module wraps `electron-store` — the standard key-value
- * persistence layer for Electron apps — and exposes a small,
- * typed API for the three kinds of data the desktop client
- * needs to keep across restarts:
- *
- *   1. Authentication state — the JWT bearer token the backend
- *      issued at login, plus a cached copy of the user object.
- *      Both are cleared on logout.
- *
- *   2. Synced settings — a cached copy of the user's
- *      `UserSettingsMap`, mirrored from the backend's
- *      UserSetting document. The cache lets the app render the
- *      correct theme and defaults on the very first frame after
- *      a cold start, before the network round trip to fetch
- *      the settings completes.
- *
- *   3. Session state — the user's last-selected preset, kept
- *      across restarts so the "New Topic" modal pre-populates
- *      with what they used last time.
- *
- * This file runs in the MAIN process only. The renderer never
- * touches it directly — all access flows through IPC handlers
- * (`authIPC.ts`, `settingsIPC.ts`, etc.) which call the helpers
- * exported below. That boundary is what keeps the file path,
- * the encryption key, and the raw store object out of the
- * renderer's reach.
- *
- * Encryption — why and how:
- *
- *   electron-store's `encryptionKey` option applies AES-256 to
- *   the entire store file. Without a key, the file would be
- *   plain JSON on disk, readable by anything that can open the
- *   app's userData directory. That would be fine for the cached
- *   settings and the last-used preset — both are non-sensitive
- *   — but the JWT is a live credential. Anyone with read access
- *   to the file could use the token to make authenticated API
- *   requests until the token's `exp` claim expired. Encrypting
- *   the store closes that window.
- *
- *   The key is derived from the OS's per-installation userData
- *   path, which is stable for a given installation on a given
- *   machine but unique across machines. That gives two
- *   properties:
- *
- *     - Stability: the key is the same on every launch of the
- *       app on the same machine, so the store can be read back.
- *
- *     - Isolation: a store file copied to a different machine
- *       (or a different user's account on the same machine)
- *       cannot be decrypted with the key derived there, so a
- *       leaked store file is not portable.
- *
- *   The key is not user-password-protected and not stored in the
- *   OS keychain. That is deliberate — the file's confidentiality
- *   protects against casual inspection of the userData directory,
- *   not against a determined attacker with local code execution.
- *   A future session that wants stronger protection would replace
- *   this scheme with `safeStorage.encryptString` from Electron,
- *   which uses the OS's credential vault.
- *
- * Schema:
- *
- *   `token`           — the JWT bearer token from a successful
- *                       login, or `null` when logged out.
- *   `user`            — a cached copy of the current user
- *                       object, or `null`.
- *   `settings`        — the last-known `UserSettingsMap` fetched
- *                       from the backend, or `null` before the
- *                       first successful fetch.
- *   `lastUsedPreset`  — the preset name the user selected on the
- *                       most recent topic, or `null` before any
- *                       topic has been created.
- *
- *   Every field defaults to `null`. That means a
- *   freshly-installed app has a valid, fully-typed store from
- *   the moment the module loads, and every helper below can
- *   return a well-typed value without needing to distinguish
- *   "not set" from "null". The two are the same thing in this
- *   schema.
- *
- * Why the store is instantiated at module load:
- *
- *   The `store` instance is created once, when this module is
- *   first imported. Every subsequent import (from any other
- *   main-process module) receives the same instance, because
- *   Node's module cache guarantees that a module's top-level
- *   statements run exactly once. The alternative — lazily
- *   creating the store on first access — would add a race
- *   condition risk for concurrent IPC calls without providing
- *   any benefit; the store's construction is cheap and has no
- *   side effect on disk until the first write.
- */
-
-import Store from 'electron-store';
-import { app } from 'electron';
-import type {
-  User,
-  UserSettingsMap,
-  PresetName,
-} from '../features/shared/types/index.js';
-
-// ============================================================
-//  Schema
-// ============================================================
-
-/**
- * The shape of the persisted store. Every key is nullable
- * because every key represents "state that may not exist yet" —
- * a freshly-installed app has no token, no user, no cached
- * settings, and no last-used preset, and none of those is an
- * error condition.
- */
-interface StoreSchema {
-  token: string | null;
-  user: User | null;
-  settings: UserSettingsMap | null;
-  lastUsedPreset: PresetName | null;
-}
-
-// ============================================================
-//  Encryption key
-// ============================================================
-
-/**
- * The app slug used both as the store's filename and as the
- * static prefix of the derived encryption key.
- *
- * Using one constant for both purposes keeps the two in sync: a
- * future rename of the app would change this string, and the
- * change would propagate to both the filename and the key
- * without needing a second edit.
- */
-const APP_SLUG = 'writespeare';
-
-/**
- * Derive the store's encryption key from the OS's per-installation
- * userData path. See the file header for the design rationale.
- *
- * `app.getPath('userData')` is safe to call before `app.whenReady()`
- * — Electron resolves it from the app's name and the platform's
- * standard user-data directory, both of which are known by the
- * time the main script is loaded. The function that wraps this
- * call is invoked once, at module load, from the `new Store(...)`
- * line below.
- */
-const buildEncryptionKey = (): string => {
-  const userDataPath = app.getPath('userData');
-  return `${APP_SLUG}-v1:${userDataPath}`;
-};
-
-// ============================================================
-//  Store instance
-// ============================================================
-
-/**
- * The single store instance, shared by every consumer in the
- * main process. See the file header for why this is created at
- * module load rather than lazily.
- *
- * The `defaults` object satisfies the schema fully — every key
- * is present with its nullable default — so the store is
- * readable and writable from the moment the module loads, even
- * on a fresh install with no persisted state.
- */
-const store = new Store<StoreSchema>({
-  name: APP_SLUG,
-  encryptionKey: buildEncryptionKey(),
-  defaults: {
-    token: null,
-    user: null,
-    settings: null,
-    lastUsedPreset: null,
-  },
-});
-
-// ============================================================
-//  Auth helpers
-// ============================================================
-
-/**
- * Return the stored JWT bearer token, or `null` when there is
- * no active session.
- *
- * The IPC handler that reads this uses `null` as the signal for
- * "not logged in" and returns a `{ success: false }` envelope to
- * the renderer, which in turn redirects to the login screen. The
- * null is not an error state — it is the correct representation
- * of "no session yet".
- */
-export const getToken = (): string | null => store.get('token');
-
-/**
- * Persist a JWT issued by the backend at login.
- *
- * The token is written encrypted — see the file header for the
- * encryption scheme. A second login overwrites the previous
- * token; there is no history of tokens and no way to retrieve a
- * superseded one.
- */
-export const setToken = (token: string): void => {
-  store.set('token', token);
-};
-
-/**
- * Clear the stored token without touching anything else.
- *
- * The auth IPC handler uses this during a successful logout. It
- * is deliberately narrower than `clearAuth` — a logout that
- * wants to also clear the cached user object calls `clearAuth`
- * instead.
- */
-export const clearToken = (): void => {
-  store.set('token', null);
-};
-
-/**
- * Return the cached user object, or `null` when there is no
- * active session.
- *
- * The cached user is written once at login and refreshed on
- * every successful call to `GET /api/auth/me`. It is the source
- * of truth for the renderer's "who am I?" question between
- * network round trips; the auth store in the renderer is
- * populated from this cache on cold start before the `me`
- * request completes.
- */
-export const getUser = (): User | null => store.get('user');
-
-/**
- * Persist the current user object.
- *
- * Called at login (with the user returned by `POST /api/auth/login`)
- * and on every successful `GET /api/auth/me`. The value replaces
- * whatever was previously cached.
- */
-export const setUser = (user: User): void => {
-  store.set('user', user);
-};
-
-/**
- * Clear the cached user object without touching the token.
- *
- * Used when the cached user is known to be stale — for example,
- * after an admin deactivates the account and the next API call
- * returns a 403 — but before the token itself is invalidated.
- * The usual sequence is `clearToken` then `clearUser` via
- * `clearAuth`.
- */
-export const clearUser = (): void => {
-  store.set('user', null);
-};
-
-/**
- * Clear both the token and the cached user object — the standard
- * logout sequence.
- *
- * The cached settings and last-used preset are deliberately left
- * in place. They are per-user data, but if the same user logs
- * back in, keeping them avoids a network round trip before the
- * UI can render correctly. If a different user logs in, the
- * login handler overwrites the settings cache on the first
- * `getUserSettings` call. The last-used preset is left alone
- * across users on the same machine for the same reason — it
- * pre-populates a convenience field that the user can override
- * with one click.
- */
-export const clearAuth = (): void => {
-  store.set('token', null);
-  store.set('user', null);
-};
-
-// ============================================================
-//  Settings helpers
-// ============================================================
-
-/**
- * Return the cached `UserSettingsMap`, or `null` before the
- * first successful fetch from the backend.
- *
- * The renderer reads this on cold start to apply the user's
- * theme preference and defaults before the network request for
- * the live settings has completed. A `null` means "use the
- * app's built-in defaults" — the same defaults the backend
- * would apply on a first-ever call.
- */
-export const getSettings = (): UserSettingsMap | null =>
-  store.get('settings');
-
-/**
- * Cache a `UserSettingsMap` that was fetched from the backend.
- *
- * Called after every successful `getUserSettings` or
- * `updateUserSettings` IPC call. The cached copy is not
- * authoritative — the backend is — but it lets the renderer
- * skip a network round trip on the next cold start.
- */
-export const setSettings = (settings: UserSettingsMap): void => {
-  store.set('settings', settings);
-};
-
-/**
- * Clear the cached settings.
- *
- * Exposed for a future "reset to defaults" flow. Not called
- * anywhere today.
- */
-export const clearSettings = (): void => {
-  store.set('settings', null);
-};
-
-// ============================================================
-//  Preset helpers
-// ============================================================
-
-/**
- * Return the last-used preset name, or `null` before the user
- * has created any topic.
- *
- * "Last used" means the preset the user selected on the most
- * recent topic-creation modal. It is a per-machine convenience,
- * not a per-user preference — it does not sync to the backend
- * and it does not change when the user's `defaultPreset`
- * preference changes.
- */
-export const getLastUsedPreset = (): PresetName | null =>
-  store.get('lastUsedPreset');
-
-/**
- * Record the preset the user selected on the most recent topic
- * creation.
- *
- * Called by the topic-creation IPC handler after a successful
- * `POST /api/topics`. Failures to write are silently ignored by
- * the caller — the last-used preset is a convenience, and its
- * absence does not break any flow.
- */
-export const setLastUsedPreset = (preset: PresetName): void => {
-  store.set('lastUsedPreset', preset);
-};
-
-// ============================================================
-//  Bulk operations
-// ============================================================
-
-/**
- * Wipe every key from the store, returning it to its default
- * state.
- *
- * Used by a "reset app data" flow if one is ever added, and by
- * tests that need a clean slate between cases. It is
- * deliberately not called by `clearAuth` — logging out does
- * not erase the user's cached settings.
- */
-export const clearAll = (): void => {
-  store.clear();
-};
-
-// ============================================================
-//  Default export
-// ============================================================
-
-/**
- * The raw `electron-store` instance, exported for consumers that
- * need direct access to a key not covered by the helper
- * functions above.
- *
- * The plan's IPC handlers use the named helpers wherever
- * possible — they are typed against `StoreSchema` and free of
- * string-literal key names. The raw store is exported as an
- * escape hatch, not as the recommended interface.
- */
-export default store;
 </file>
 
 <file path="apps/desktop/src/renderer/styles/tailwind.css">
@@ -79690,6 +81481,463 @@ app.on('before-quit', () => {
     //   await chromeLauncher.killAll();
   })();
 });
+</file>
+
+<file path="apps/desktop/src/main/store.ts">
+/**
+ * Local persistent store for the WriteSpeare desktop app.
+ *
+ * This module wraps `electron-store` — the standard key-value
+ * persistence layer for Electron apps — and exposes a small,
+ * typed API for the four kinds of data the desktop client
+ * needs to keep across restarts:
+ *
+ *   1. Authentication state — the JWT bearer token the backend
+ *      issued at login, plus a cached copy of the user object.
+ *      Both are cleared on logout.
+ *
+ *   2. Synced settings — a cached copy of the user's
+ *      `UserSettingsMap`, mirrored from the backend's
+ *      UserSetting document. The cache lets the app render the
+ *      correct theme and defaults on the very first frame after
+ *      a cold start, before the network round trip to fetch
+ *      the settings completes.
+ *
+ *   3. Session state — the user's last-selected preset, kept
+ *      across restarts so the "New Topic" modal pre-populates
+ *      with what they used last time.
+ *
+ *   4. DeepSeek session status — the last-known live/dead state
+ *      of the DeepSeek chat session, cached so the launch-time
+ *      check in `main/index.ts` can read it without a fresh
+ *      round trip. Written by the `deepseek:checkSession` IPC
+ *      handler on every successful check.
+ *
+ * This file runs in the MAIN process only. The renderer never
+ * touches it directly — all access flows through IPC handlers
+ * (`authIPC.ts`, `settingsIPC.ts`, etc.) which call the helpers
+ * exported below. That boundary is what keeps the file path,
+ * the encryption key, and the raw store object out of the
+ * renderer's reach.
+ *
+ * Encryption — why and how:
+ *
+ *   electron-store's `encryptionKey` option applies AES-256 to
+ *   the entire store file. Without a key, the file would be
+ *   plain JSON on disk, readable by anything that can open the
+ *   app's userData directory. That would be fine for the cached
+ *   settings and the last-used preset — both are non-sensitive
+ *   — but the JWT is a live credential. Anyone with read access
+ *   to the file could use the token to make authenticated API
+ *   requests until the token's `exp` claim expired. Encrypting
+ *   the store closes that window.
+ *
+ *   The key is derived from the OS's per-installation userData
+ *   path, which is stable for a given installation on a given
+ *   machine but unique across machines. That gives two
+ *   properties:
+ *
+ *     - Stability: the key is the same on every launch of the
+ *       app on the same machine, so the store can be read back.
+ *
+ *     - Isolation: a store file copied to a different machine
+ *       (or a different user's account on the same machine)
+ *       cannot be decrypted with the key derived there, so a
+ *       leaked store file is not portable.
+ *
+ *   The key is not user-password-protected and not stored in the
+ *   OS keychain. That is deliberate — the file's confidentiality
+ *   protects against casual inspection of the userData directory,
+ *   not against a determined attacker with local code execution.
+ *   A future session that wants stronger protection would replace
+ *   this scheme with `safeStorage.encryptString` from Electron,
+ *   which uses the OS's credential vault.
+ *
+ * Schema:
+ *
+ *   `token`                   — the JWT bearer token from a
+ *                               successful login, or `null` when
+ *                               logged out.
+ *   `user`                    — a cached copy of the current
+ *                               user object, or `null`.
+ *   `settings`                — the last-known `UserSettingsMap`
+ *                               fetched from the backend, or
+ *                               `null` before the first
+ *                               successful fetch.
+ *   `lastUsedPreset`          — the preset name the user
+ *                               selected on the most recent
+ *                               topic, or `null` before any
+ *                               topic has been created.
+ *   `deepseekSessionStatus`   — the last-known DeepSeek session
+ *                               status, or `null` before the
+ *                               first check. Written by the
+ *                               `deepseek:checkSession` IPC
+ *                               handler so the launch-time path
+ *                               in `main/index.ts` can read the
+ *                               cached value without a fresh
+ *                               round trip.
+ *
+ *   Every field defaults to `null`. That means a
+ *   freshly-installed app has a valid, fully-typed store from
+ *   the moment the module loads, and every helper below can
+ *   return a well-typed value without needing to distinguish
+ *   "not set" from "null". The two are the same thing in this
+ *   schema.
+ *
+ * Why the store is instantiated at module load:
+ *
+ *   The `store` instance is created once, when this module is
+ *   first imported. Every subsequent import (from any other
+ *   main-process module) receives the same instance, because
+ *   Node's module cache guarantees that a module's top-level
+ *   statements run exactly once. The alternative — lazily
+ *   creating the store on first access — would add a race
+ *   condition risk for concurrent IPC calls without providing
+ *   any benefit; the store's construction is cheap and has no
+ *   side effect on disk until the first write.
+ */
+
+import Store from 'electron-store';
+import { app } from 'electron';
+import type {
+  User,
+  UserSettingsMap,
+  PresetName,
+} from '../features/shared/types/index.js';
+
+// ============================================================
+//  Schema
+// ============================================================
+
+/**
+ * The shape of the persisted store. Every key is nullable
+ * because every key represents "state that may not exist yet" —
+ * a freshly-installed app has no token, no user, no cached
+ * settings, and no last-used preset, and none of those is an
+ * error condition.
+ */
+interface StoreSchema {
+  token: string | null;
+  user: User | null;
+  settings: UserSettingsMap | null;
+  lastUsedPreset: PresetName | null;
+  deepseekSessionStatus: { live: boolean; checkedAt: string } | null;
+}
+
+// ============================================================
+//  Encryption key
+// ============================================================
+
+/**
+ * The app slug used both as the store's filename and as the
+ * static prefix of the derived encryption key.
+ *
+ * Using one constant for both purposes keeps the two in sync: a
+ * future rename of the app would change this string, and the
+ * change would propagate to both the filename and the key
+ * without needing a second edit.
+ */
+const APP_SLUG = 'writespeare';
+
+/**
+ * Derive the store's encryption key from the OS's per-installation
+ * userData path. See the file header for the design rationale.
+ *
+ * `app.getPath('userData')` is safe to call before `app.whenReady()`
+ * — Electron resolves it from the app's name and the platform's
+ * standard user-data directory, both of which are known by the
+ * time the main script is loaded. The function that wraps this
+ * call is invoked once, at module load, from the `new Store(...)`
+ * line below.
+ */
+const buildEncryptionKey = (): string => {
+  const userDataPath = app.getPath('userData');
+  return `${APP_SLUG}-v1:${userDataPath}`;
+};
+
+// ============================================================
+//  Store instance
+// ============================================================
+
+/**
+ * The single store instance, shared by every consumer in the
+ * main process. See the file header for why this is created at
+ * module load rather than lazily.
+ *
+ * The `defaults` object satisfies the schema fully — every key
+ * is present with its nullable default — so the store is
+ * readable and writable from the moment the module loads, even
+ * on a fresh install with no persisted state.
+ */
+const store = new Store<StoreSchema>({
+  name: APP_SLUG,
+  encryptionKey: buildEncryptionKey(),
+  defaults: {
+    token: null,
+    user: null,
+    settings: null,
+    lastUsedPreset: null,
+    deepseekSessionStatus: null,
+  },
+});
+
+// ============================================================
+//  Auth helpers
+// ============================================================
+
+/**
+ * Return the stored JWT bearer token, or `null` when there is
+ * no active session.
+ *
+ * The IPC handler that reads this uses `null` as the signal for
+ * "not logged in" and returns a `{ success: false }` envelope to
+ * the renderer, which in turn redirects to the login screen. The
+ * null is not an error state — it is the correct representation
+ * of "no session yet".
+ */
+export const getToken = (): string | null => store.get('token');
+
+/**
+ * Persist a JWT issued by the backend at login.
+ *
+ * The token is written encrypted — see the file header for the
+ * encryption scheme. A second login overwrites the previous
+ * token; there is no history of tokens and no way to retrieve a
+ * superseded one.
+ */
+export const setToken = (token: string): void => {
+  store.set('token', token);
+};
+
+/**
+ * Clear the stored token without touching anything else.
+ *
+ * The auth IPC handler uses this during a successful logout. It
+ * is deliberately narrower than `clearAuth` — a logout that
+ * wants to also clear the cached user object calls `clearAuth`
+ * instead.
+ */
+export const clearToken = (): void => {
+  store.set('token', null);
+};
+
+/**
+ * Return the cached user object, or `null` when there is no
+ * active session.
+ *
+ * The cached user is written once at login and refreshed on
+ * every successful call to `GET /api/auth/me`. It is the source
+ * of truth for the renderer's "who am I?" question between
+ * network round trips; the auth store in the renderer is
+ * populated from this cache on cold start before the `me`
+ * request completes.
+ */
+export const getUser = (): User | null => store.get('user');
+
+/**
+ * Persist the current user object.
+ *
+ * Called at login (with the user returned by `POST /api/auth/login`)
+ * and on every successful `GET /api/auth/me`. The value replaces
+ * whatever was previously cached.
+ */
+export const setUser = (user: User): void => {
+  store.set('user', user);
+};
+
+/**
+ * Clear the cached user object without touching the token.
+ *
+ * Used when the cached user is known to be stale — for example,
+ * after an admin deactivates the account and the next API call
+ * returns a 403 — but before the token itself is invalidated.
+ * The usual sequence is `clearToken` then `clearUser` via
+ * `clearAuth`.
+ */
+export const clearUser = (): void => {
+  store.set('user', null);
+};
+
+/**
+ * Clear both the token and the cached user object — the standard
+ * logout sequence.
+ *
+ * The cached settings and last-used preset are deliberately left
+ * in place. They are per-user data, but if the same user logs
+ * back in, keeping them avoids a network round trip before the
+ * UI can render correctly. If a different user logs in, the
+ * login handler overwrites the settings cache on the first
+ * `getUserSettings` call. The last-used preset is left alone
+ * across users on the same machine for the same reason — it
+ * pre-populates a convenience field that the user can override
+ * with one click.
+ */
+export const clearAuth = (): void => {
+  store.set('token', null);
+  store.set('user', null);
+};
+
+// ============================================================
+//  Settings helpers
+// ============================================================
+
+/**
+ * Return the cached `UserSettingsMap`, or `null` before the
+ * first successful fetch from the backend.
+ *
+ * The renderer reads this on cold start to apply the user's
+ * theme preference and defaults before the network request for
+ * the live settings has completed. A `null` means "use the
+ * app's built-in defaults" — the same defaults the backend
+ * would apply on a first-ever call.
+ */
+export const getSettings = (): UserSettingsMap | null =>
+  store.get('settings');
+
+/**
+ * Cache a `UserSettingsMap` that was fetched from the backend.
+ *
+ * Called after every successful `getUserSettings` or
+ * `updateUserSettings` IPC call. The cached copy is not
+ * authoritative — the backend is — but it lets the renderer
+ * skip a network round trip on the next cold start.
+ */
+export const setSettings = (settings: UserSettingsMap): void => {
+  store.set('settings', settings);
+};
+
+/**
+ * Clear the cached settings.
+ *
+ * Exposed for a future "reset to defaults" flow. Not called
+ * anywhere today.
+ */
+export const clearSettings = (): void => {
+  store.set('settings', null);
+};
+
+// ============================================================
+//  Preset helpers
+// ============================================================
+
+/**
+ * Return the last-used preset name, or `null` before the user
+ * has created any topic.
+ *
+ * "Last used" means the preset the user selected on the most
+ * recent topic-creation modal. It is a per-machine convenience,
+ * not a per-user preference — it does not sync to the backend
+ * and it does not change when the user's `defaultPreset`
+ * preference changes.
+ */
+export const getLastUsedPreset = (): PresetName | null =>
+  store.get('lastUsedPreset');
+
+/**
+ * Record the preset the user selected on the most recent topic
+ * creation.
+ *
+ * Called by the topic-creation IPC handler after a successful
+ * `POST /api/topics`. Failures to write are silently ignored by
+ * the caller — the last-used preset is a convenience, and its
+ * absence does not break any flow.
+ */
+export const setLastUsedPreset = (preset: PresetName): void => {
+  store.set('lastUsedPreset', preset);
+};
+
+// ============================================================
+//  DeepSeek session status helpers
+// ============================================================
+
+/**
+ * Return the last-known DeepSeek session status, or `null`
+ * before the first check has completed.
+ *
+ * The value is written by the `deepseek:checkSession` IPC
+ * handler (`deepseekIPC.ts`) after every successful session
+ * check. The launch-time path in `main/index.ts` reads it on
+ * cold start to seed the Settings page's DeepSeek tab with the
+ * last-known status without running a fresh check — the plan's
+ * N2 decision, which says to check at launch only if Chrome is
+ * already open.
+ *
+ * The shape is `{ live: boolean; checkedAt: string } | null`:
+ *
+ *   `live`       — whether the DeepSeek chat page was present
+ *                  with a valid signed-in session at the moment
+ *                  of the last check.
+ *   `checkedAt`  — an ISO-8601 timestamp for when that check
+ *                  ran.
+ *   `null`       — the state before any check has completed in
+ *                  any prior app session. A fresh install that
+ *                  has never opened DeepSeek has `null` here,
+ *                  and the caller treats that as "status
+ *                  unknown, run a fresh check if you need one".
+ *
+ * The cache is intentionally not cleared on logout. It is a
+ * machine-level fact about the state of the user's Chrome
+ * profile, not a user-scoped credential — a second user logging
+ * in on the same machine and the same Chrome profile would see
+ * the same DeepSeek session, so clearing the cache would be
+ * misleading rather than protective.
+ */
+export const getDeepSeekSessionStatus = (): {
+  live: boolean;
+  checkedAt: string;
+} | null => store.get('deepseekSessionStatus');
+
+/**
+ * Persist the DeepSeek session status after a check.
+ *
+ * Called by the `deepseek:checkSession` IPC handler on every
+ * successful check. The value replaces whatever was previously
+ * cached — the cache is a "last-known" value, not a history.
+ *
+ * The function accepts the exact shape the caller's
+ * `SessionCheckResult` carries, so the IPC handler can call
+ * `setDeepSeekSessionStatus(result)` directly without reshaping
+ * the value.
+ */
+export const setDeepSeekSessionStatus = (status: {
+  live: boolean;
+  checkedAt: string;
+}): void => {
+  store.set('deepseekSessionStatus', status);
+};
+
+// ============================================================
+//  Bulk operations
+// ============================================================
+
+/**
+ * Wipe every key from the store, returning it to its default
+ * state.
+ *
+ * Used by a "reset app data" flow if one is ever added, and by
+ * tests that need a clean slate between cases. It is
+ * deliberately not called by `clearAuth` — logging out does
+ * not erase the user's cached settings.
+ */
+export const clearAll = (): void => {
+  store.clear();
+};
+
+// ============================================================
+//  Default export
+// ============================================================
+
+/**
+ * The raw `electron-store` instance, exported for consumers that
+ * need direct access to a key not covered by the helper
+ * functions above.
+ *
+ * The plan's IPC handlers use the named helpers wherever
+ * possible — they are typed against `StoreSchema` and free of
+ * string-literal key names. The raw store is exported as an
+ * escape hatch, not as the recommended interface.
+ */
+export default store;
 </file>
 
 <file path="apps/desktop/src/resources/scripts/core/file_io.py">

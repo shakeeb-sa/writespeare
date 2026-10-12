@@ -619,6 +619,18 @@ export interface UserSettingsMap {
   autoSaveAfterEachStage: boolean;
   notifyOnCompletion: boolean;
   theme: 'light' | 'dark';
+  /**
+   * Where the "Download bundle" flow writes the topic's archive
+   * ZIP. `'ask'` opens a Save-As dialog on every download so the
+   * user picks the location each time; `'default'` writes silently
+   * to `bundleDownloadPath`.
+   */
+  bundleDownloadMode: 'ask' | 'default';
+  /**
+   * The destination path the bundle flow writes to when
+   * `bundleDownloadMode` is `'default'`. Empty string when unset.
+   */
+  bundleDownloadPath: string;
 }
 
 /**

@@ -9,14 +9,15 @@
  * in flight and shows a spinner on the trigger button.
  *
  * The component is rendered by the sibling `ArticlePreview.tsx`
- * (in the writer feature's components folder), which passes the
- * article's Mongo ID as the component's sole prop. The forward
- * reference that file carries — `TS2307` until this file exists —
- * resolves when this file is created.
+ * (in the writer feature's components folder), which passes
+ * both the article's Mongo ID and its topic's Mongo ID. The
+ * two IDs drive the two mechanisms the menu offers: the
+ * article ID for the three article-format exports, the topic
+ * ID for the report download.
  *
- * ── The three formats ──────────────────────────────────────────
+ * ── The four menu items ────────────────────────────────────────
  *
- *   The three items, in the order they appear in the menu:
+ *   The four items, in the order they appear in the menu:
  *
  *     Word (.docx)     A Word document with headings, bold runs,
  *                      italic runs, and links preserved as native
@@ -37,12 +38,26 @@
  *                      file header for the reasoning on the
  *                      txt/md mapping.
  *
+ *     Download report (Markdown)
+ *                      The topic's latest validation report,
+ *                      rendered to a human-readable Markdown
+ *                      document by the main process. Distinct
+ *                      from the three article formats above:
+ *                      this item does not export the article,
+ *                      it exports the REPORT, and it operates on
+ *                      the TOPIC (not the article) — the report
+ *                      is a topic-level artifact that describes
+ *                      the most recent validation run against
+ *                      the topic's current article. See
+ *                      `exportIPC.ts`'s `export:report` handler
+ *                      and `reportRenderer.ts` for the flow.
+ *
  *   Each item carries a small icon from `lucide-react` to
- *   distinguish the three formats at a glance. The icons are
- *   `FileType2` for Word, `FileCode2` for Markdown, and
- *   `FileText` for plain text. They are decorative — the label
- *   text is what a screen reader announces and what a user
- *   reads.
+ *   distinguish them at a glance. The icons are `FileType2` for
+ *   Word, `FileCode2` for Markdown, `FileText` for plain text,
+ *   and `ClipboardList` for the report. They are decorative —
+ *   the label text is what a screen reader announces and what a
+ *   user reads.
  *
  * ── The controlled-open pattern ────────────────────────────────
  *
@@ -121,8 +136,11 @@
  *   - It does not open the Save-As dialog. That is the IPC
  *     handler's job.
  *
- *   - It does not render the toast on success or failure. The
- *     `useExport` hook owns that — see its file header for why.
+ *   - It does not render the toast for the three article-format
+ *     exports. The `useExport` hook owns those — see its file
+ *     header for why. The report download fires its own toast
+ *     directly from this component, because it does not flow
+ *     through that hook.
  *
  *   - It does not have a mode where the menu is always open, or
  *     a mode where the items are rendered inline. The plan
@@ -150,6 +168,7 @@ import {
 } from 'react';
 import {
   ChevronDown,
+  ClipboardList,
   FileCode2,
   FileText,
   FileType2,
@@ -162,6 +181,7 @@ import {
   setCurrentArticleId,
   type ExportFormat,
 } from '../hooks/useExport.js';
+import { useToast } from '../../shared/hooks/useToast.js';
 
 // ============================================================
 //  Public types
@@ -183,6 +203,22 @@ import {
 export interface ExportMenuProps {
   /** The Mongo ObjectId of the article to export. */
   articleId: string;
+
+  /**
+   * The Mongo ObjectId of the topic the article belongs to.
+   * Required by the "Download report (Markdown)" menu item,
+   * which exports the topic's latest validation report — a
+   * topic-level artifact, not an article-level one.
+   *
+   * The two IDs are not redundant. An article can have zero or
+   * more validation reports attached (one per validation run),
+   * and a topic can have accumulated articles that were since
+   * regenerated. The report that the download contains is the
+   * topic's most recent, which is the one the Report tab shows.
+   * See `exportIPC.ts`'s `export:report` handler for the full
+   * resolution order.
+   */
+  topicId: string;
 }
 
 // ============================================================
@@ -198,16 +234,66 @@ export interface ExportMenuProps {
 //  vice versa, since the array is exhaustive over the three
 //  values.
 
-interface MenuItemDefinition {
-  readonly format: ExportFormat;
-  readonly label: string;
-  readonly icon: LucideIcon;
-}
+/**
+ * A single item in the dropdown, as a discriminated union.
+ *
+ * The two variants correspond to the two mechanisms the menu
+ * drives:
+ *
+ *   - `kind: 'article'` — the three article-format exports.
+ *     Dispatched through the `useExport` hook's `exportAs`
+ *     action, keyed by the `format` field.
+ *
+ *   - `kind: 'report'` — the topic-report download. Dispatched
+ *     directly against the `window.electronAPI.export.report`
+ *     IPC channel, keyed by the `topicId` prop. Does not go
+ *     through `useExport`, because the report export takes a
+ *     different argument (topicId, not articleId) and produces a
+ *     different artifact (the validation report, not an
+ *     article).
+ *
+ * The discriminated-union form is deliberate: it makes the
+ * dispatch in the render loop a compile-time-checked switch, and
+ * it prevents an item from being defined with a `format` that
+ * the report path would silently ignore (or vice versa).
+ */
+type MenuItemDefinition =
+  | {
+      readonly kind: 'article';
+      readonly format: ExportFormat;
+      readonly label: string;
+      readonly icon: LucideIcon;
+    }
+  | {
+      readonly kind: 'report';
+      readonly label: string;
+      readonly icon: LucideIcon;
+    };
 
 const MENU_ITEMS: readonly MenuItemDefinition[] = [
-  { format: 'docx', label: 'Word (.docx)', icon: FileType2 },
-  { format: 'md', label: 'Markdown (.md)', icon: FileCode2 },
-  { format: 'txt', label: 'Plain text (.txt)', icon: FileText },
+  {
+    kind: 'article',
+    format: 'docx',
+    label: 'Word (.docx)',
+    icon: FileType2,
+  },
+  {
+    kind: 'article',
+    format: 'md',
+    label: 'Markdown (.md)',
+    icon: FileCode2,
+  },
+  {
+    kind: 'article',
+    format: 'txt',
+    label: 'Plain text (.txt)',
+    icon: FileText,
+  },
+  {
+    kind: 'report',
+    label: 'Download report (Markdown)',
+    icon: ClipboardList,
+  },
 ];
 
 // ============================================================
@@ -219,11 +305,26 @@ const MENU_ITEMS: readonly MenuItemDefinition[] = [
  * responsibilities, its controlled-open pattern, and the
  * reasoning behind the article-ID propagation.
  */
-export const ExportMenu = ({ articleId }: ExportMenuProps) => {
+export const ExportMenu = ({ articleId, topicId }: ExportMenuProps) => {
   const { exportAs, isExporting } = useExport();
+  const toast = useToast();
 
   // ---- Menu open/closed state ----
   const [isOpen, setIsOpen] = useState(false);
+
+  // ---- Report-download in-flight flag ----
+  // The three article exports go through the `useExport` hook,
+  // whose `isExporting` field tracks their state. The report
+  // download does not go through that hook — it calls the
+  // `window.electronAPI.export.report` channel directly — so it
+  // needs its own in-flight flag. The two flags are combined
+  // into the local `isBusy` derivation below for the disabled
+  // state and the spinner; they are kept separate so a future
+  // session that wanted to distinguish "article export running"
+  // from "report download running" (a different spinner label,
+  // a different menu item highlight) has the information
+  // available without a re-derivation.
+  const [isReporting, setIsReporting] = useState(false);
 
   // ---- Container ref for the outside-click check ----
   const containerRef = useRef<HTMLDivElement>(null);
@@ -249,19 +350,70 @@ export const ExportMenu = ({ articleId }: ExportMenuProps) => {
     setIsOpen(false);
   }, []);
 
-  // ---- Handle item click ----
+  // ---- Handle article-format item click ----
   // Closes the menu first so the user sees the menu dismiss
   // immediately, then fires the export. The export's async
-  // resolution is not awaited here — the hook owns the toast
-  // that reports the outcome, and the component does not need
-  // to react to the result.
-  const handleItemClick = useCallback(
+  // resolution is not awaited here — the `useExport` hook owns
+  // the toast that reports the outcome, and the component does
+  // not need to react to the result.
+  const handleArticleExport = useCallback(
     (format: ExportFormat): void => {
       handleClose();
       void exportAs(format);
     },
     [handleClose, exportAs]
   );
+
+  // ---- Handle report item click ----
+  // Fires the report download against the `export:report` IPC
+  // channel, which the main process's `exportIPC.ts` handler
+  // services by rendering the topic's latest validation report
+  // to Markdown and writing it to a user-chosen path.
+  //
+  // The download's success/failure toast is fired here rather
+  // than delegated to `useExport`, because the report path does
+  // not flow through that hook — it takes a `topicId`, not an
+  // `articleId`, and produces a different artifact. The two
+  // toast messages ("Exported to <filename>" from the hook,
+  // "Downloaded <filename>" from here) are distinct so a user
+  // scanning the notification area sees which kind of download
+  // completed.
+  //
+  // A cancelled Save-As dialog produces a successful envelope
+  // with `data: null`, matching the `useExport` hook's contract.
+  // The handler treats that case as a silent close — no toast —
+  // because the user already knows they cancelled.
+  const handleReportDownload = useCallback((): void => {
+    handleClose();
+    setIsReporting(true);
+    void (async (): Promise<void> => {
+      try {
+        const result = await window.electronAPI.export.report(topicId);
+
+        if (!result.success) {
+          toast.error(result.error ?? 'Failed to download the report.');
+          return;
+        }
+
+        if (result.data !== null && result.data !== undefined) {
+          const filename =
+            result.data.split(/[\\/]/).pop() ?? result.data;
+          toast.success(`Downloaded ${filename}`);
+        }
+        // A successful envelope with a null `data` field means
+        // the user cancelled the Save-As dialog — no toast, no
+        // error.
+      } catch (err) {
+        console.error(
+          '[ExportMenu] report download failed:',
+          err
+        );
+        toast.error('Unable to reach the export service.');
+      } finally {
+        setIsReporting(false);
+      }
+    })();
+  }, [handleClose, topicId, toast]);
 
   // ---- Outside-click handler ----
   // Installed on the document when the menu is open, removed
@@ -327,7 +479,7 @@ export const ExportMenu = ({ articleId }: ExportMenuProps) => {
           'dark:text-neutral-100'
         }
       >
-        {isExporting ? (
+        {isExporting || isReporting ? (
           <Loader2
             size={14}
             className="animate-spin"
@@ -367,13 +519,36 @@ export const ExportMenu = ({ articleId }: ExportMenuProps) => {
         >
           {MENU_ITEMS.map((item) => {
             const Icon = item.icon;
+            // The React key is the format for article items and
+            // the literal `'report'` for the report item. The
+            // two namespaces do not overlap (the article formats
+            // are `'docx' | 'md' | 'txt'`), so this is unique
+            // across the four entries.
+            const key =
+              item.kind === 'article' ? item.format : 'report';
+            // The click handler dispatches on the discriminated
+            // `kind` field. The switch is exhaustive over the
+            // `MenuItemDefinition` union — the compiler enforces
+            // that every variant is handled, and `noImplicitReturns`
+            // ensures both branches return before the function's
+            // end.
+            const onClick = (): void => {
+              switch (item.kind) {
+                case 'article':
+                  handleArticleExport(item.format);
+                  return;
+                case 'report':
+                  handleReportDownload();
+                  return;
+              }
+            };
             return (
               <button
-                key={item.format}
+                key={key}
                 type="button"
                 role="menuitem"
-                onClick={() => handleItemClick(item.format)}
-                disabled={isExporting}
+                onClick={onClick}
+                disabled={isExporting || isReporting}
                 className={
                   'flex w-full items-center gap-2 px-3 py-2 ' +
                   'text-left text-sm text-text ' +
