@@ -172,6 +172,22 @@ const isTheme = (value: unknown): value is 'light' | 'dark' =>
   typeof value === 'string' &&
   (THEME_VALUES as readonly string[]).includes(value);
 
+  // The two legal modes for the "Download bundle" flow. Declared
+// as an inline readonly tuple because the shared types module
+// declares the same union (`UserSettingsMap.bundleDownloadMode`)
+// as an inline `'ask' | 'default'` — there is no named alias to
+// re-import.
+const BUNDLE_DOWNLOAD_MODE_VALUES: readonly ['ask', 'default'] = [
+  'ask',
+  'default',
+];
+
+const isBundleDownloadMode = (
+  value: unknown
+): value is 'ask' | 'default' =>
+  typeof value === 'string' &&
+  (BUNDLE_DOWNLOAD_MODE_VALUES as readonly string[]).includes(value);
+
 // ============================================================
 //  Primitive type predicates
 // ============================================================
@@ -230,6 +246,56 @@ const isNumberTuple2 = (value: unknown): value is [number, number] => {
   }
   return value.every(
     (item) => typeof item === 'number' && Number.isFinite(item)
+  );
+};
+
+
+// ============================================================
+//  Domain shape guards
+// ============================================================
+//
+//  Shape guards for the structured objects the controller reads
+//  from request bodies. Each is a narrow `unknown` → typed
+//  predicate; the schema is authoritative on ranges and integer-
+//  ness, and the guard only confirms that the runtime shape
+//  matches what the service expects.
+
+/**
+ * The runtime shape of a bucket layout. Used by the preset-create,
+ * preset-update, and user-settings-update handlers to validate
+ * the `defaultBucketLayout` field before delegating to the
+ * service. Matches the shape declared on the shared `Preset`,
+ * `Topic`, and `UserSettingsMap` interfaces.
+ */
+interface BucketLayout {
+  anyTime: number;
+  pastYear: number;
+  pastMonth: number;
+  pastWeek: number;
+}
+
+/**
+ * Narrow `unknown` to a `BucketLayout`. Checks that the value is
+ * a plain object and that all four required fields are finite
+ * numbers. Does NOT check numeric ranges or integer-ness — the
+ * schema's validators are authoritative on those; the controller
+ * only confirms that the shape is right before the value reaches
+ * the service.
+ */
+const isBucketLayout = (value: unknown): value is BucketLayout => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    isNumber(v['anyTime']) &&
+    isNumber(v['pastYear']) &&
+    isNumber(v['pastMonth']) &&
+    isNumber(v['pastWeek'])
   );
 };
 
@@ -296,7 +362,7 @@ export const getUserSettings = async (
  *      the current settings.
  *   5. Respond with 200 and the updated settings.
  *
- * Only the six fields on `UserSettingsMap` are read from the
+ * Only the nine fields on `UserSettingsMap` are read from the
  * body. Any other key — including a `userId` a client might try
  * to sneak in — is ignored, because the handler only reads the
  * keys it names.
@@ -403,6 +469,47 @@ export const updateUserSettings = async (
       return;
     }
     patch.theme = theme;
+  }
+
+  
+  const defaultBucketLayout = body['defaultBucketLayout'];
+  if (defaultBucketLayout !== undefined) {
+    if (!isBucketLayout(defaultBucketLayout)) {
+      res.status(400).json({
+        success: false,
+        error:
+          'defaultBucketLayout must be an object with anyTime, ' +
+          'pastYear, pastMonth, and pastWeek as numbers.',
+      });
+      return;
+    }
+    patch.defaultBucketLayout = defaultBucketLayout;
+  }
+
+  const bundleDownloadMode = body['bundleDownloadMode'];
+  if (bundleDownloadMode !== undefined) {
+    if (!isBundleDownloadMode(bundleDownloadMode)) {
+      res.status(400).json({
+        success: false,
+        error:
+          `bundleDownloadMode must be one of: ` +
+          `${BUNDLE_DOWNLOAD_MODE_VALUES.join(', ')}.`,
+      });
+      return;
+    }
+    patch.bundleDownloadMode = bundleDownloadMode;
+  }
+
+  const bundleDownloadPath = body['bundleDownloadPath'];
+  if (bundleDownloadPath !== undefined) {
+    if (typeof bundleDownloadPath !== 'string') {
+      res.status(400).json({
+        success: false,
+        error: 'bundleDownloadPath must be a string.',
+      });
+      return;
+    }
+    patch.bundleDownloadPath = bundleDownloadPath;
   }
 
   // ---- 4. Delegate to the service ----
@@ -598,6 +705,18 @@ export const createPreset = async (
     return;
   }
 
+  
+  const defaultBucketLayout = body['defaultBucketLayout'];
+  if (!isBucketLayout(defaultBucketLayout)) {
+    res.status(400).json({
+      success: false,
+      error:
+        'defaultBucketLayout must be an object with anyTime, ' +
+        'pastYear, pastMonth, and pastWeek as numbers.',
+    });
+    return;
+  }
+
   const sourceCount = body['sourceCount'];
   if (!isNumber(sourceCount)) {
     res.status(400).json({
@@ -634,14 +753,7 @@ export const createPreset = async (
     return;
   }
 
-  const maxResults = body['maxResults'];
-  if (!isNumber(maxResults)) {
-    res.status(400).json({
-      success: false,
-      error: 'maxResults must be a number.',
-    });
-    return;
-  }
+
 
   const pageLoadTimeout = body['pageLoadTimeout'];
   if (!isNumber(pageLoadTimeout)) {
@@ -787,11 +899,11 @@ export const createPreset = async (
   const payload = {
     name,
     displayName,
+    defaultBucketLayout,
     sourceCount,
     wordCount,
     searchEngines,
     resultsPerPage,
-    maxResults,
     pageLoadTimeout,
     maxRetries,
     targetReadingGrade,
@@ -892,11 +1004,16 @@ export const updatePreset = async (
   // are present in the body AND pass validation.
   const patch: Partial<{
     displayName: string;
+    defaultBucketLayout: {
+      anyTime: number;
+      pastYear: number;
+      pastMonth: number;
+      pastWeek: number;
+    };
     sourceCount: number;
     wordCount: number;
     searchEngines: string[];
     resultsPerPage: number;
-    maxResults: number;
     pageLoadTimeout: number;
     maxRetries: number;
     targetReadingGrade: [number, number];
@@ -924,6 +1041,21 @@ export const updatePreset = async (
       return;
     }
     patch.displayName = displayName;
+  }
+
+  
+  const defaultBucketLayout = body['defaultBucketLayout'];
+  if (defaultBucketLayout !== undefined) {
+    if (!isBucketLayout(defaultBucketLayout)) {
+      res.status(400).json({
+        success: false,
+        error:
+          'defaultBucketLayout must be an object with anyTime, ' +
+          'pastYear, pastMonth, and pastWeek as numbers.',
+      });
+      return;
+    }
+    patch.defaultBucketLayout = defaultBucketLayout;
   }
 
   const sourceCount = body['sourceCount'];
@@ -974,17 +1106,7 @@ export const updatePreset = async (
     patch.resultsPerPage = resultsPerPage;
   }
 
-  const maxResults = body['maxResults'];
-  if (maxResults !== undefined) {
-    if (!isNumber(maxResults)) {
-      res.status(400).json({
-        success: false,
-        error: 'maxResults must be a number.',
-      });
-      return;
-    }
-    patch.maxResults = maxResults;
-  }
+
 
   const pageLoadTimeout = body['pageLoadTimeout'];
   if (pageLoadTimeout !== undefined) {

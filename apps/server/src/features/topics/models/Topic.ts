@@ -5,16 +5,18 @@
  * in, one article out. Every Document, Article, and Report
  * references its owning Topic by `_id`. The Topic document is
  * where the user's per-topic choices live — which preset they
- * picked, which profile, which prompt template, how many sources
- * and how many words they asked for — plus the runtime status
- * that tracks where the pipeline currently is.
+ * picked, which profile, which prompt template, the four-bucket
+ * search distribution, how many words they asked for — plus the
+ * runtime status that tracks where the pipeline currently is.
  *
  * Responsibilities:
  *
  *   1. Enforce the schema-level invariants of a topic record:
  *      a non-empty title, legal values for the three closed
- *      unions (status / preset / profile), numeric ranges on the
- *      two count fields, and a bounded error string.
+ *      unions (status / preset / profile), a well-formed
+ *      four-bucket search distribution, a numeric range on
+ *      `wordCount`, a numeric range on the derived
+ *      `sourceCount`, and a bounded error string.
  *
  *   2. Own the indexes that make the two access patterns the
  *      Topics page exercises efficient:
@@ -150,6 +152,66 @@ const PROFILE_NAME_VALUES: ProfileName[] = [
 //  Schema
 // ============================================================
 
+
+// ---- Search buckets ----
+// The four time-range buckets the search step fills for this
+// topic. Each value is the number of candidates the search
+// should collect for that specific time range; a value of zero
+// means the bucket is skipped entirely (per the plan's Q8.3
+// decision). The four values sum to the topic's `sourceCount`.
+//
+// Declared as a standalone `Schema` with `{ _id: false }` so
+// Mongoose does not auto-generate an `_id` on the embedded
+// sub-document. Same pattern the Preset and UserSetting models
+// use for their `defaultBucketLayout` sub-schemas, and the same
+// pattern the Report model uses for its six section sub-schemas.
+const SearchBucketsSchema = new Schema(
+  {
+    anyTime: {
+      type: Number,
+      required: true,
+      min: [0, 'anyTime must be non-negative.'],
+      max: [50, 'anyTime must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'anyTime must be an integer.',
+      },
+    },
+    pastYear: {
+      type: Number,
+      required: true,
+      min: [0, 'pastYear must be non-negative.'],
+      max: [50, 'pastYear must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'pastYear must be an integer.',
+      },
+    },
+    pastMonth: {
+      type: Number,
+      required: true,
+      min: [0, 'pastMonth must be non-negative.'],
+      max: [50, 'pastMonth must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'pastMonth must be an integer.',
+      },
+    },
+    pastWeek: {
+      type: Number,
+      required: true,
+      min: [0, 'pastWeek must be non-negative.'],
+      max: [50, 'pastWeek must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'pastWeek must be an integer.',
+      },
+    },
+  },
+  { _id: false }
+);
+
+
 const TopicSchema = new Schema<TopicDocument>(
   {
     // ---- Ownership ----
@@ -227,6 +289,36 @@ const TopicSchema = new Schema<TopicDocument>(
         message: 'wordCount must be an integer.',
       },
     },
+
+        // ---- Search buckets ----
+    // The four time-range buckets the search step fills for this
+    // topic. Snapshotted from the chosen preset's
+    // `defaultBucketLayout` at topic creation time — a topic's
+    // search behaviour does not change if the preset it was
+    // created from is later edited. This is the same snapshot
+    // pattern the topic already uses for `wordCount`,
+    // `promptFile`, and `profile`.
+    //
+    // The default (4, 2, 2, 2) matches the Balanced preset's
+    // 10-source split, so a topic created without an explicit
+    // distribution gets the same behaviour the pre-refactor
+    // default of `sourceCount: 10` produced.
+    searchBuckets: {
+      type: SearchBucketsSchema,
+      required: true,
+      default: () => ({
+        anyTime: 4,
+        pastYear: 2,
+        pastMonth: 2,
+        pastWeek: 2,
+      }),
+    },
+    // `sourceCount` is a derived value: its value is always the
+    // sum of `searchBuckets`'s four bucket counts. It is stored
+    // as a materialised aggregate so a caller which only needs
+    // the total does not have to fetch the full bucket object
+    // and sum it itself. The service is responsible for keeping
+    // this field in sync with the bucket layout on every write.
     sourceCount: {
       type: Number,
       default: 10,

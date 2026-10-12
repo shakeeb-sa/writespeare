@@ -217,6 +217,24 @@ export interface Topic {
   profile: ProfileName;
   promptFile: string;
   wordCount: number;
+  /**
+   * The four time-range buckets the search step fills for this
+   * topic. Snapshotted from the chosen preset's `defaultBucketLayout`
+   * at creation time; the sum of the four values equals
+   * `sourceCount`.
+   */
+  searchBuckets: {
+    anyTime: number;
+    pastYear: number;
+    pastMonth: number;
+    pastWeek: number;
+  };
+  /**
+   * Total sources to fetch per topic. Derived from the sum of
+   * `searchBuckets`'s four bucket counts; stored as a materialised
+   * aggregate so a caller which only needs the total does not have
+   * to fetch and sum the bucket object itself.
+   */
   sourceCount: number;
   status: TopicStatus;
   /** Populated only when `status === 'failed'`. */
@@ -237,6 +255,19 @@ export interface TopicCreatePayload {
   profile?: ProfileName;
   promptFile?: string;
   wordCount?: number;
+  /**
+   * The four time-range buckets the search step should fill. When
+   * provided, the topic service derives `sourceCount` as the sum of
+   * the four values. When omitted, the service synthesises a bucket
+   * layout from `sourceCount` for backward compatibility — see the
+   * topic service for the derivation rule.
+   */
+  searchBuckets?: {
+    anyTime: number;
+    pastYear: number;
+    pastMonth: number;
+    pastWeek: number;
+  };
   sourceCount?: number;
 }
 
@@ -252,6 +283,18 @@ export interface TopicUpdatePayload {
   profile?: ProfileName;
   promptFile?: string;
   wordCount?: number;
+  /**
+   * The four time-range buckets the search step should fill for
+   * this topic. Same derivation rule as `TopicCreatePayload`: when
+   * provided, the topic service recomputes `sourceCount` from the
+   * sum; when omitted, both fields keep their current values.
+   */
+  searchBuckets?: {
+    anyTime: number;
+    pastYear: number;
+    pastMonth: number;
+    pastWeek: number;
+  };
   sourceCount?: number;
   status?: TopicStatus;
   error?: string;
@@ -544,7 +587,24 @@ export interface Preset {
   name: string;
   /** Human-readable label shown in the preset picker. */
   displayName: string;
-  /** Total sources to fetch per topic. */
+  /**
+   * The four time-range buckets the search step fills. Snapshotted
+   * from the preset's `defaultBucketLayout` onto each topic created
+   * with the preset; the sum of the four values equals the preset's
+   * `sourceCount`.
+   */
+  defaultBucketLayout: {
+    anyTime: number;
+    pastYear: number;
+    pastMonth: number;
+    pastWeek: number;
+  };
+  /**
+   * Total sources to fetch per topic. Derived from the sum of
+   * `defaultBucketLayout`'s four bucket counts; stored as a
+   * materialised aggregate so a caller which only needs the total
+   * does not have to fetch and sum the bucket object itself.
+   */
   sourceCount: number;
   /** Target word count for the generated article. */
   wordCount: number;
@@ -552,8 +612,7 @@ export interface Preset {
   searchEngines: string[];
   /** Results to read per search engine page. */
   resultsPerPage: number;
-  /** Hard cap on total candidate URLs before the search step stops. */
-  maxResults: number;
+
   /** Per-page navigation timeout, in milliseconds. */
   pageLoadTimeout: number;
   /** Retries per failed page load before the URL is marked as failed. */
@@ -590,11 +649,16 @@ export interface Preset {
 export interface PresetCreatePayload {
   name: string;
   displayName: string;
+  defaultBucketLayout: {
+    anyTime: number;
+    pastYear: number;
+    pastMonth: number;
+    pastWeek: number;
+  };
   sourceCount: number;
   wordCount: number;
   searchEngines: string[];
   resultsPerPage: number;
-  maxResults: number;
   pageLoadTimeout: number;
   maxRetries: number;
   targetReadingGrade: [number, number];
@@ -627,9 +691,32 @@ export interface UserSettingsMap {
   defaultPreset: PresetName;
   defaultProfile: ProfileName;
   defaultPromptFile: string;
+  /**
+   * The user's default time-bucketed search distribution. Used to
+   * seed a new topic when no preset is applied. The four values
+   * sum to the topic's derived `sourceCount`.
+   */
+  defaultBucketLayout: {
+    anyTime: number;
+    pastYear: number;
+    pastMonth: number;
+    pastWeek: number;
+  };
   autoSaveAfterEachStage: boolean;
   notifyOnCompletion: boolean;
   theme: 'light' | 'dark';
+  /**
+   * Where the "Download bundle" flow writes the topic's archive
+   * ZIP. `'ask'` opens a Save-As dialog on every download so the
+   * user picks the location each time; `'default'` writes silently
+   * to `bundleDownloadPath`.
+   */
+  bundleDownloadMode: 'ask' | 'default';
+  /**
+   * The destination path the bundle flow writes to when
+   * `bundleDownloadMode` is `'default'`. Empty string when unset.
+   */
+  bundleDownloadPath: string;
 }
 
 /**

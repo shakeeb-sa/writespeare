@@ -145,6 +145,85 @@ import { AppError } from '../../shared/middleware/errorHandler.js';
 export type UserSettingsUpdatePayload = Partial<UserSettingsMap>;
 
 // ============================================================
+//  Bucket-layout helpers
+// ============================================================
+//
+//  `defaultBucketLayout` is the primary count field on a preset
+//  (per the C2 decision — the bucket layout is the single source
+//  of truth for "how many sources to collect"). The preset's
+//  `sourceCount` field is a materialised aggregate of the four
+//  bucket counts, kept in sync with the layout by the helpers
+//  below.
+//
+//  The same four-bucket shape is used by `Topic.searchBuckets`
+//  and by the `defaultBucketLayout` field on `UserSettingsMap`.
+//  Deriving the local type alias from the imported
+//  `PresetCreatePayload` keeps the three declarations in
+//  lockstep — a change to the shared type propagates here
+//  automatically, rather than requiring a matching edit in a
+//  locally-declared interface that would silently drift.
+
+/**
+ * The four time-range buckets a preset's default search
+ * distribution is expressed as.
+ *
+ * Derived from `PresetCreatePayload['defaultBucketLayout']` so the
+ * shape here cannot drift from the shape the shared types module
+ * declares. If the shared declaration ever changes — a fifth
+ * bucket, a rename of one of the four — the compiler reports it at
+ * every call site in this file rather than letting this alias
+ * quietly disagree with the wire contract.
+ */
+type BucketLayout = PresetCreatePayload['defaultBucketLayout'];
+
+/**
+ * Compute a preset's `sourceCount` from its `defaultBucketLayout`.
+ *
+ * The sum of the four bucket counts is the total number of sources
+ * the preset instructs the search step to collect. Per the C2
+ * decision, this derived value is what gets persisted on the
+ * preset — never a separately-supplied count — so the two fields
+ * cannot drift on disk.
+ */
+const deriveSourceCount = (layout: BucketLayout): number =>
+  layout.anyTime +
+  layout.pastYear +
+  layout.pastMonth +
+  layout.pastWeek;
+
+/**
+ * Synthesize an even-split `defaultBucketLayout` from a bare
+ * `sourceCount`.
+ *
+ * Used only on the legacy fallback path where a caller provides a
+ * `sourceCount` without a `defaultBucketLayout` — an older API
+ * client, or a small UI that has not yet been updated to expose
+ * the four buckets. The count is split evenly across the four
+ * buckets, with any remainder placed on `anyTime`, so the four
+ * bucket counts always sum to the caller's number and the
+ * `sourceCount === sum of bucket counts` invariant holds on the
+ * persisted document.
+ *
+ * The same derivation rule is used by the migration script
+ * (`0001_add_bucket_layout.py`) when synthesizing a bucket layout
+ * for legacy preset and topic records that predate the four-bucket
+ * schema. Keeping the two implementations identical means a legacy
+ * record migrated by the script and a legacy record updated by
+ * this function end up with the same bucket layout for the same
+ * source count.
+ */
+const synthesizeBucketLayout = (sourceCount: number): BucketLayout => {
+  const per = Math.floor(sourceCount / 4);
+  const remainder = sourceCount - per * 4;
+  return {
+    anyTime: per + remainder,
+    pastYear: per,
+    pastMonth: per,
+    pastWeek: per,
+  };
+};
+
+// ============================================================
 //  getUserSettings
 // ============================================================
 
@@ -278,6 +357,15 @@ export const updateUserSettings = async (
   }
   if (patch.theme !== undefined) {
     setObj['settings.theme'] = patch.theme;
+  }
+  if (patch.defaultBucketLayout !== undefined) {
+    setObj['settings.defaultBucketLayout'] = patch.defaultBucketLayout;
+  }
+  if (patch.bundleDownloadMode !== undefined) {
+    setObj['settings.bundleDownloadMode'] = patch.bundleDownloadMode;
+  }
+  if (patch.bundleDownloadPath !== undefined) {
+    setObj['settings.bundleDownloadPath'] = patch.bundleDownloadPath;
   }
 
   // ---- Empty-patch short circuit ----
@@ -421,8 +509,20 @@ export const createPreset = async (
   // type does not include a `userId` field, so there is no risk
   // of the caller's value overriding the session value — the
   // compiler enforces that.
+  //
+  // `sourceCount` is ALWAYS derived from `defaultBucketLayout`,
+  // overriding whatever value the payload carried. Per the C2
+  // decision, the bucket layout is the single source of truth
+  // for "how many sources to collect", and `sourceCount` is a
+  // materialised aggregate of it. A caller that sends a
+  // `sourceCount` that does not match the sum of its
+  // `defaultBucketLayout` gets the layout's sum, not the
+  // caller's number — the alternative would let the two fields
+  // drift on the persisted document.
+  const sourceCount = deriveSourceCount(payload.defaultBucketLayout);
   const doc = new PresetModel({
     ...payload,
+    sourceCount,
     userId,
   });
 
@@ -485,7 +585,24 @@ export const updatePreset = async (
   if (patch.displayName !== undefined) {
     setObj['displayName'] = patch.displayName;
   }
-  if (patch.sourceCount !== undefined) {
+  // `defaultBucketLayout` and `sourceCount` are handled together,
+  // in that order, so that the bucket layout wins whenever both
+  // are present. Per the C2 decision, the bucket layout is the
+  // single source of truth for "how many sources to collect", so
+  // when both fields are present `sourceCount` is derived from
+  // the layout and the caller's raw count is ignored. When only
+  // `sourceCount` is present — a legacy caller, or a UI that does
+  // not yet expose the four buckets — a bucket layout is
+  // synthesized as an even split with the remainder on `anyTime`,
+  // keeping the invariant `sourceCount === sum of the four bucket
+  // counts` intact on the persisted document.
+  if (patch.defaultBucketLayout !== undefined) {
+    setObj['defaultBucketLayout'] = patch.defaultBucketLayout;
+    setObj['sourceCount'] = deriveSourceCount(patch.defaultBucketLayout);
+  } else if (patch.sourceCount !== undefined) {
+    setObj['defaultBucketLayout'] = synthesizeBucketLayout(
+      patch.sourceCount
+    );
     setObj['sourceCount'] = patch.sourceCount;
   }
   if (patch.wordCount !== undefined) {
@@ -497,9 +614,7 @@ export const updatePreset = async (
   if (patch.resultsPerPage !== undefined) {
     setObj['resultsPerPage'] = patch.resultsPerPage;
   }
-  if (patch.maxResults !== undefined) {
-    setObj['maxResults'] = patch.maxResults;
-  }
+
   if (patch.pageLoadTimeout !== undefined) {
     setObj['pageLoadTimeout'] = patch.pageLoadTimeout;
   }

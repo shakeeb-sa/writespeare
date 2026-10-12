@@ -4,24 +4,28 @@
  * A UserSetting document holds the per-user preferences that
  * apply across every topic a user works on: which preset a new
  * topic should start with, which profile, which prompt template,
- * whether the pipeline auto-saves after each stage, whether the
- * user wants a notification when a topic finishes, and which
- * theme the desktop UI should render.
+ * the default time-bucketed search distribution, whether the
+ * pipeline auto-saves after each stage, whether the user wants a
+ * notification when a topic finishes, which theme the desktop UI
+ * should render, and where the "Download bundle" flow saves its
+ * output.
  *
  * The per-topic values (the keyword list, the word count, the
  * source count, the preset, the profile, the prompt file) live on
  * the `Topic` document itself — the UserSetting document holds
- * only the defaults a new topic is seeded with, plus the two
- * cross-cutting toggles (auto-save and notifications) and the
- * theme preference.
+ * only the defaults a new topic is seeded with, plus the bucket
+ * layout default, the two cross-cutting toggles (auto-save and
+ * notifications), the theme preference, and the two bundle-
+ * download preferences.
  *
  * Responsibilities:
  *
  *   1. Enforce the schema-level invariants of a settings record:
- *      a required `userId`, the six fields of the embedded
- *      `settings` sub-document, and closed-set validation on the
- *      three fields whose values come from a string-literal
- *      union (`defaultPreset`, `defaultProfile`, `theme`).
+ *      a required `userId`, the fields of the embedded `settings`
+ *      sub-document, and closed-set validation on the four fields
+ *      whose values come from a string-literal union
+ *      (`defaultPreset`, `defaultProfile`, `theme`, and
+ *      `bundleDownloadMode`).
  *
  *   2. Enforce the one-document-per-user invariant via a unique
  *      index on `userId`. The service is expected to perform an
@@ -172,6 +176,19 @@ const PROFILE_VALUES: readonly ProfileName[] = [
 
 const THEME_VALUES: readonly ['light', 'dark'] = ['light', 'dark'];
 
+// The two modes for the "Download bundle" flow. `'ask'` opens a
+// Save-As dialog on every download; `'default'` writes silently
+// to the path stored in `bundleDownloadPath`. Declared as an
+// inline readonly tuple because the shared types module does not
+// export a named type for this union — the
+// `UserSettingsMap.bundleDownloadMode` field uses the inline
+// union `'ask' | 'default'` directly.
+const BUNDLE_DOWNLOAD_MODE_VALUES: readonly ['ask', 'default'] = [
+  'ask',
+  'default',
+];
+
+
 // ============================================================
 //  Settings sub-schema
 // ============================================================
@@ -180,6 +197,66 @@ const THEME_VALUES: readonly ['light', 'dark'] = ['light', 'dark'];
 //  so Mongoose does not auto-generate an `_id` on the embedded
 //  sub-document. The sub-schema is embedded by reference in the
 //  top-level schema below.
+
+// ---- Default bucket layout ----
+// The four time-range buckets a user's new topics default to.
+// Each value is the number of candidates the search step collects
+// for that specific time range; a value of zero means the bucket
+// is skipped entirely (per the plan's Q8.3 decision). The four
+// values sum to `sourceCount` on any topic created from this
+// layout.
+//
+// Declared as a standalone `Schema` with `{ _id: false }` so
+// Mongoose does not auto-generate an `_id` on the embedded sub-
+// document. Same pattern the top-level `settings` map uses, and
+// the same pattern the Report model uses for its six section
+// sub-schemas.
+const DefaultBucketLayoutSchema = new Schema(
+  {
+    anyTime: {
+      type: Number,
+      required: true,
+      min: [0, 'anyTime must be non-negative.'],
+      max: [50, 'anyTime must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'anyTime must be an integer.',
+      },
+    },
+    pastYear: {
+      type: Number,
+      required: true,
+      min: [0, 'pastYear must be non-negative.'],
+      max: [50, 'pastYear must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'pastYear must be an integer.',
+      },
+    },
+    pastMonth: {
+      type: Number,
+      required: true,
+      min: [0, 'pastMonth must be non-negative.'],
+      max: [50, 'pastMonth must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'pastMonth must be an integer.',
+      },
+    },
+    pastWeek: {
+      type: Number,
+      required: true,
+      min: [0, 'pastWeek must be non-negative.'],
+      max: [50, 'pastWeek must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'pastWeek must be an integer.',
+      },
+    },
+  },
+  { _id: false }
+);
+
 
 const UserSettingsMapSchema = new Schema(
   {
@@ -211,6 +288,30 @@ const UserSettingsMapSchema = new Schema(
       minlength: [1, 'defaultPromptFile must not be empty.'],
       maxlength: [200, 'defaultPromptFile must be at most 200 characters.'],
     },
+
+        // ---- Default bucket layout ----
+    // The user's default time-bucketed search distribution, used
+    // to seed a new topic when no preset is applied (per the
+    // plan's Item 3 / C2 decision). The four values correspond to
+    // the four time ranges the search step queries; a value of
+    // zero means the bucket is skipped. The sum of the four
+    // values is what `sourceCount` materialises to on a topic
+    // created from this default.
+    //
+    // The default (4, 2, 2, 2) matches the Balanced preset's
+    // 10-source bucket split, so a user who never opens the
+    // Settings page gets the same distribution a Balanced topic
+    // would produce.
+    defaultBucketLayout: {
+      type: DefaultBucketLayoutSchema,
+      required: true,
+      default: () => ({
+        anyTime: 4,
+        pastYear: 2,
+        pastMonth: 2,
+        pastWeek: 2,
+      }),
+    },
     autoSaveAfterEachStage: {
       type: Boolean,
       default: true,
@@ -229,6 +330,32 @@ const UserSettingsMapSchema = new Schema(
       },
       default: 'light',
       required: true,
+    },
+
+        // ---- Bundle download ----
+    // Where the "Download bundle" flow writes the topic's archive
+    // ZIP. `'ask'` opens a Save-As dialog on every download so the
+    // user picks the location each time; `'default'` writes
+    // silently to `bundleDownloadPath`. The path is only consulted
+    // when the mode is `'default'`; an empty path in that mode is
+    // a configuration error the service is expected to catch.
+    bundleDownloadMode: {
+      type: String,
+      enum: {
+        values: BUNDLE_DOWNLOAD_MODE_VALUES,
+        message: 'bundleDownloadMode must be one of: ask, default.',
+      },
+      default: 'ask',
+      required: true,
+    },
+    bundleDownloadPath: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: [
+        500,
+        'bundleDownloadPath must be at most 500 characters.',
+      ],
     },
   },
   { _id: false }

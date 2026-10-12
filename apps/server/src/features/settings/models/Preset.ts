@@ -90,14 +90,13 @@
  *
  *   - It does not enforce cross-field constraints between the
  *     numeric fields. For example, `maxKeywordDensity` should
- *     logically be greater than or equal to `minKeywordDensity`,
- *     and `maxResults` should logically be greater than or equal
- *     to `resultsPerPage`. Neither is checked here — Mongoose's
- *     cross-field validation is awkward to write, and a violation
- *     is a bug in the caller's configuration, not a bad value on
- *     a single field. The service layer is the right place for
- *     those checks, where the full preset is available as a unit
- *     and the error can name both fields.
+ *     logically be greater than or equal to `minKeywordDensity`.
+ *     The constraint is not checked here — Mongoose's cross-field
+ *     validation is awkward to write, and a violation is a bug in
+ *     the caller's configuration, not a bad value on a single
+ *     field. The service layer is the right place for that check,
+ *     where the full preset is available as a unit and the error
+ *     can name both fields.
  *
  *   - It does not distinguish "user-created preset" from "system
  *     preset copied and edited by a user" beyond the `userId`
@@ -143,6 +142,65 @@ export interface PresetDocument
 //  Schema
 // ============================================================
 
+// ---- Default bucket layout ----
+// The four time-range buckets the preset's search phase fills.
+// Each value is the number of candidates the search step should
+// collect for that specific time range; a value of zero means
+// the bucket is skipped entirely (per the plan's Q8.3 decision).
+// The four values sum to the preset's `sourceCount`, which is
+// stored alongside this layout as a materialised aggregate.
+//
+// Declared as a standalone `Schema` with `{ _id: false }` so
+// Mongoose does not auto-generate an `_id` on the embedded
+// sub-document. Same pattern the Report model uses for its six
+// section sub-schemas.
+const DefaultBucketLayoutSchema = new Schema(
+  {
+    anyTime: {
+      type: Number,
+      required: true,
+      min: [0, 'anyTime must be non-negative.'],
+      max: [50, 'anyTime must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'anyTime must be an integer.',
+      },
+    },
+    pastYear: {
+      type: Number,
+      required: true,
+      min: [0, 'pastYear must be non-negative.'],
+      max: [50, 'pastYear must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'pastYear must be an integer.',
+      },
+    },
+    pastMonth: {
+      type: Number,
+      required: true,
+      min: [0, 'pastMonth must be non-negative.'],
+      max: [50, 'pastMonth must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'pastMonth must be an integer.',
+      },
+    },
+    pastWeek: {
+      type: Number,
+      required: true,
+      min: [0, 'pastWeek must be non-negative.'],
+      max: [50, 'pastWeek must be at most 50.'],
+      validate: {
+        validator: (value: number): boolean => Number.isInteger(value),
+        message: 'pastWeek must be an integer.',
+      },
+    },
+  },
+  { _id: false }
+);
+
+
 const PresetSchema = new Schema<PresetDocument>(
   {
     // ---- Ownership ----
@@ -181,10 +239,25 @@ const PresetSchema = new Schema<PresetDocument>(
     },
 
     // ---- Pipeline configuration ----
-    // The two headline numbers that drive the pipeline. Bounds
-    // mirror the Topic model's bounds for the same fields, so a
-    // preset's targets are always within the range a topic can
-    // legitimately request.
+    // The four-bucket search distribution. This is the primary
+    // count field on the preset: every topic created with the
+    // preset snapshots this layout, and the Python search
+    // pipeline runs one time-bucketed search per bucket. The
+    // bucket layout is the single source of truth for "how many
+    // sources to collect"; there is no separate maxResults
+    // field. See the plan's Item 3 / C2 decision for the full
+    // rationale.
+    defaultBucketLayout: {
+      type: DefaultBucketLayoutSchema,
+      required: true,
+    },
+    // `sourceCount` is a derived value: its value is always the
+    // sum of `defaultBucketLayout`'s four bucket counts. It is
+    // stored as a materialised aggregate so that a caller which
+    // only needs the total does not have to fetch the full
+    // bucket object and sum it itself. The service is
+    // responsible for keeping this field in sync with the
+    // bucket layout on every write.
     sourceCount: {
       type: Number,
       required: true,
@@ -229,16 +302,7 @@ const PresetSchema = new Schema<PresetDocument>(
         message: 'resultsPerPage must be an integer.',
       },
     },
-    maxResults: {
-      type: Number,
-      required: true,
-      min: [1, 'maxResults must be at least 1.'],
-      max: [200, 'maxResults must be at most 200.'],
-      validate: {
-        validator: (value: number): boolean => Number.isInteger(value),
-        message: 'maxResults must be an integer.',
-      },
-    },
+
 
     // ---- Extraction behaviour ----
     // Per-page navigation timeout in milliseconds. Minimum one
