@@ -3,7 +3,7 @@
  *
  * This module wraps `electron-store` — the standard key-value
  * persistence layer for Electron apps — and exposes a small,
- * typed API for the three kinds of data the desktop client
+ * typed API for the four kinds of data the desktop client
  * needs to keep across restarts:
  *
  *   1. Authentication state — the JWT bearer token the backend
@@ -20,6 +20,12 @@
  *   3. Session state — the user's last-selected preset, kept
  *      across restarts so the "New Topic" modal pre-populates
  *      with what they used last time.
+ *
+ *   4. DeepSeek session status — the last-known live/dead state
+ *      of the DeepSeek chat session, cached so the launch-time
+ *      check in `main/index.ts` can read it without a fresh
+ *      round trip. Written by the `deepseek:checkSession` IPC
+ *      handler on every successful check.
  *
  * This file runs in the MAIN process only. The renderer never
  * touches it directly — all access flows through IPC handlers
@@ -63,16 +69,27 @@
  *
  * Schema:
  *
- *   `token`           — the JWT bearer token from a successful
- *                       login, or `null` when logged out.
- *   `user`            — a cached copy of the current user
- *                       object, or `null`.
- *   `settings`        — the last-known `UserSettingsMap` fetched
- *                       from the backend, or `null` before the
- *                       first successful fetch.
- *   `lastUsedPreset`  — the preset name the user selected on the
- *                       most recent topic, or `null` before any
- *                       topic has been created.
+ *   `token`                   — the JWT bearer token from a
+ *                               successful login, or `null` when
+ *                               logged out.
+ *   `user`                    — a cached copy of the current
+ *                               user object, or `null`.
+ *   `settings`                — the last-known `UserSettingsMap`
+ *                               fetched from the backend, or
+ *                               `null` before the first
+ *                               successful fetch.
+ *   `lastUsedPreset`          — the preset name the user
+ *                               selected on the most recent
+ *                               topic, or `null` before any
+ *                               topic has been created.
+ *   `deepseekSessionStatus`   — the last-known DeepSeek session
+ *                               status, or `null` before the
+ *                               first check. Written by the
+ *                               `deepseek:checkSession` IPC
+ *                               handler so the launch-time path
+ *                               in `main/index.ts` can read the
+ *                               cached value without a fresh
+ *                               round trip.
  *
  *   Every field defaults to `null`. That means a
  *   freshly-installed app has a valid, fully-typed store from
@@ -118,6 +135,7 @@ interface StoreSchema {
   user: User | null;
   settings: UserSettingsMap | null;
   lastUsedPreset: PresetName | null;
+  deepseekSessionStatus: { live: boolean; checkedAt: string } | null;
 }
 
 // ============================================================
@@ -173,6 +191,7 @@ const store = new Store<StoreSchema>({
     user: null,
     settings: null,
     lastUsedPreset: null,
+    deepseekSessionStatus: null,
   },
 });
 
@@ -339,6 +358,66 @@ export const getLastUsedPreset = (): PresetName | null =>
  */
 export const setLastUsedPreset = (preset: PresetName): void => {
   store.set('lastUsedPreset', preset);
+};
+
+// ============================================================
+//  DeepSeek session status helpers
+// ============================================================
+
+/**
+ * Return the last-known DeepSeek session status, or `null`
+ * before the first check has completed.
+ *
+ * The value is written by the `deepseek:checkSession` IPC
+ * handler (`deepseekIPC.ts`) after every successful session
+ * check. The launch-time path in `main/index.ts` reads it on
+ * cold start to seed the Settings page's DeepSeek tab with the
+ * last-known status without running a fresh check — the plan's
+ * N2 decision, which says to check at launch only if Chrome is
+ * already open.
+ *
+ * The shape is `{ live: boolean; checkedAt: string } | null`:
+ *
+ *   `live`       — whether the DeepSeek chat page was present
+ *                  with a valid signed-in session at the moment
+ *                  of the last check.
+ *   `checkedAt`  — an ISO-8601 timestamp for when that check
+ *                  ran.
+ *   `null`       — the state before any check has completed in
+ *                  any prior app session. A fresh install that
+ *                  has never opened DeepSeek has `null` here,
+ *                  and the caller treats that as "status
+ *                  unknown, run a fresh check if you need one".
+ *
+ * The cache is intentionally not cleared on logout. It is a
+ * machine-level fact about the state of the user's Chrome
+ * profile, not a user-scoped credential — a second user logging
+ * in on the same machine and the same Chrome profile would see
+ * the same DeepSeek session, so clearing the cache would be
+ * misleading rather than protective.
+ */
+export const getDeepSeekSessionStatus = (): {
+  live: boolean;
+  checkedAt: string;
+} | null => store.get('deepseekSessionStatus');
+
+/**
+ * Persist the DeepSeek session status after a check.
+ *
+ * Called by the `deepseek:checkSession` IPC handler on every
+ * successful check. The value replaces whatever was previously
+ * cached — the cache is a "last-known" value, not a history.
+ *
+ * The function accepts the exact shape the caller's
+ * `SessionCheckResult` carries, so the IPC handler can call
+ * `setDeepSeekSessionStatus(result)` directly without reshaping
+ * the value.
+ */
+export const setDeepSeekSessionStatus = (status: {
+  live: boolean;
+  checkedAt: string;
+}): void => {
+  store.set('deepseekSessionStatus', status);
 };
 
 // ============================================================
