@@ -148,6 +148,25 @@ from core.utils import (
 # DuckDuckGo mixes image/video/news results into the SERP.
 DUCKDUCKGO_SEARCH_URL = "https://duckduckgo.com/"
 
+# Maps each time-range bucket identifier to DuckDuckGo's `&df`
+# (date filter) parameter value. The `anytime` bucket is
+# deliberately absent from this map — its absence is what causes
+# the `&df` parameter to be omitted from the search URL entirely,
+# which is DuckDuckGo's own representation of "no time filter".
+# This mirrors the manifest's rule: "Append `&df=y|m|w` for the
+# DDG equivalents."
+#
+# The values use DuckDuckGo's single-letter date-filter codes:
+# `y` = past year, `m` = past month, `w` = past week. DuckDuckGo
+# also supports `d` (past day), which this map does not include
+# because the pipeline's four-bucket vocabulary does not have an
+# entry for it.
+TIME_RANGE_TO_DF: dict[str, str] = {
+    "year": "y",
+    "month": "m",
+    "week": "w",
+}
+
 # Navigation and readiness timeouts, in milliseconds — Playwright's
 # unit.
 NAVIGATION_TIMEOUT_MS = 30_000
@@ -234,9 +253,13 @@ CAPTCHA_URL_FRAGMENTS = (
 #  URL helpers
 # =============================================================================
 
-def _build_search_url(query: str) -> str:
+def _build_search_url(
+    query: str,
+    time_range: str = "anytime",
+) -> str:
     """
-    Build the DuckDuckGo SERP URL for a query.
+    Build the DuckDuckGo SERP URL for a query, restricted to the
+    given time range when one is specified.
 
     DuckDuckGo has no pagination URL parameter — the initial query
     lands on the first page, and additional results are appended by
@@ -244,9 +267,28 @@ def _build_search_url(query: str) -> str:
     no `start` argument (unlike its Google counterpart), and the
     pagination loop below does not rebuild the URL after the first
     navigation.
+
+    The `time_range` argument is one of the four bucket identifiers
+    the pipeline's bucketed search queries (`anytime`, `year`,
+    `month`, `week`). Any value present in `TIME_RANGE_TO_DF` is
+    translated into DuckDuckGo's `&df=<code>` (date filter)
+    parameter; every other value — including `anytime` and any
+    unrecognized string — produces a URL with no date filter,
+    which is DuckDuckGo's own representation of "no time
+    restriction". Treating an unknown value as "no filter" rather
+    than as an error is deliberate: the caller (`main.py`)
+    validates the value against the closed set before invoking
+    this script, so an unrecognized value cannot arrive from a
+    well-formed invocation, and the safe fallback for a
+    hypothetical malformed one is a search with no filter rather
+    than a crash mid-pipeline.
     """
     q = quote_plus(query)
-    return f"{DUCKDUCKGO_SEARCH_URL}?q={q}&ia=web"
+    base = f"{DUCKDUCKGO_SEARCH_URL}?q={q}&ia=web"
+    df = TIME_RANGE_TO_DF.get(time_range)
+    if df is None:
+        return base
+    return f"{base}&df={df}"
 
 
 def _detect_platform(url: str) -> str:
@@ -541,6 +583,7 @@ def run_search(
     max_results: int,
     topic_id: str,
     port: int,
+    time_range: str = "anytime",
 ) -> int:
     """
     Run a DuckDuckGo search and emit the candidate list as markers.
@@ -570,6 +613,15 @@ def run_search(
                       the renderer can route the candidates to the
                       correct store entry.
         port        – The Chrome CDP debug port to connect to.
+        time_range  – Which time-range bucket this search is for.
+                      One of `anytime`, `year`, `month`, `week`.
+                      The value is translated into DuckDuckGo's
+                      `&df` parameter by `_build_search_url`;
+                      `anytime` produces a search with no date
+                      filter, which is what every pre-bucketed
+                      caller expects. The default keeps a
+                      standalone invocation that omits the
+                      argument working unchanged.
 
     The function is fully synchronous — Playwright's sync API is
     used, matching `core.browser`'s implementation and
@@ -610,7 +662,7 @@ def run_search(
         return 1
 
     # ---- 2. Initial navigation ----
-    url = _build_search_url(query)
+    url = _build_search_url(query, time_range)
 
     # Checkpoint BEFORE the initial navigation — a user who clicked
     # Stop after the previous stage does not wait for a new page to
@@ -677,6 +729,7 @@ def run_search(
             MARKER_SEARCH_RESULT,
             {
                 "topicId": topic_id,
+                "timeRange": time_range,
                 "query": query,
                 "keywords": keywords,
                 "candidates": [],
@@ -692,6 +745,7 @@ def run_search(
             MARKER_SEARCH_RESULT,
             {
                 "topicId": topic_id,
+                "timeRange": time_range,
                 "query": query,
                 "keywords": keywords,
                 "candidates": [],
@@ -703,6 +757,7 @@ def run_search(
         MARKER_SEARCH_PROGRESS,
         {
             "topicId": topic_id,
+            "timeRange": time_range,
             "page": 1,
             "found": len(collected),
             "requested": max_results,
@@ -798,6 +853,7 @@ def run_search(
             MARKER_SEARCH_PROGRESS,
             {
                 "topicId": topic_id,
+                "timeRange": time_range,
                 "page": clicks + 1,
                 "found": len(collected),
                 "requested": max_results,
@@ -824,6 +880,7 @@ def run_search(
         MARKER_SEARCH_RESULT,
         {
             "topicId": topic_id,
+            "timeRange": time_range,
             "query": query,
             "keywords": keywords,
             "candidates": final_results,
