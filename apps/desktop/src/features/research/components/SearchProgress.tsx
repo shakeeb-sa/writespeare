@@ -2,99 +2,140 @@
  * SearchProgress — the live search panel for the Sources tab.
  *
  * Renders one of four visual states, driven by the research
- * store's `status` field and by whether the candidate list is
- * populated:
+ * hook's `status` field for the topic this panel was given:
  *
- *   1. IDLE (no candidates, no error)
+ *   1. IDLE (no candidates in any bucket, no error)
  *      A short invitation with a "Start Search" button. The
- *      button calls `runSearch(topic._id, topic.title,
- *      topic.keywords)` and, on success, the store's marker
- *      handler populates the candidate list — at which point the
- *      component re-renders into the completed state.
+ *      button calls `runFullSearch(topic._id, topic.title,
+ *      topic.keywords, bucketConfig)`, which runs four searches
+ *      — one per time-range bucket — sequentially. As each
+ *      search's markers arrive, the store's per-bucket handlers
+ *      populate the candidate record and clear that bucket's
+ *      progress slot, and this panel re-renders into the
+ *      SEARCHING state until every bucket has finished.
  *
  *   2. SEARCHING (status === 'searching')
- *      A spinner with a live progress line — "page N of M,
- *      X candidates found" — updated by the `SEARCH_PROGRESS`
- *      markers the main process emits. A "Cancel" button lets
- *      the user abort; it calls the hook's `cancel` action which
- *      hard-kills the Python child (see `researchIPC.ts` for the
- *      graceful-vs-hard distinction).
+ *      A spinner with an overall progress bar ("N of M across
+ *      four buckets — X%") and a secondary line naming the
+ *      currently-active bucket and its own progress. The
+ *      progress data comes from the hook's `searchProgress`
+ *      field, which is a four-bucket record — each bucket's
+ *      slot is either `null` (not running) or a live
+ *      `SearchProgress` object carrying the page count, the
+ *      count found so far, and the count requested. A "Cancel"
+ *      button lets the user abort; it calls the hook's `cancel`
+ *      action, which hard-kills the Python child (see
+ *      `researchIPC.ts` for the graceful-vs-hard distinction).
  *
  *   3. ERROR (status === 'error')
- *      A red banner with the store's error message and two
- *      buttons: "Retry" (re-runs `runSearch`) and "Dismiss"
+ *      A red banner with the topic's error message and two
+ *      buttons: "Retry" (re-runs `runFullSearch`) and "Dismiss"
  *      (clears the error without retrying).
  *
- *   4. COMPLETE (candidates populated, status back to 'idle')
+ *   4. COMPLETE (any candidates exist, status back to 'idle')
  *      A green summary line — "N candidates found" — with a
  *      "Search again" button. The candidate list itself is
  *      rendered below this panel by the sibling `SourceList`
  *      component; this panel only reports the count.
  *
+ * ── Why the hook call now takes `topic._id` ─────────────────────
+ *
+ *   PR-1 of the store-isolation refactor (Q4.3: "refactor all
+ *   feature stores to key by topicId in the same pass") changed
+ *   `useResearch`'s signature from `useResearch()` to
+ *   `useResearch(topicId)`. The hook now reads per-topic slots
+ *   from the research store — `candidatesByTopic[topicId]`,
+ *   `searchProgressByTopic[topicId]`, `statusByTopic[topicId]`,
+ *   `errorByTopic[topicId]` — so two components rendering
+ *   different topics see independent state and the same
+ *   component re-renders only when its own topic's data changes.
+ *
+ *   This component always has the topic in hand — it receives
+ *   the `Topic` object as its only prop — so passing `topic._id`
+ *   to the hook is zero-friction.
+ *
+ * ── The bucket config derivation — a transient PR-1 measure ─────
+ *
+ *   `runFullSearch` takes a `BucketConfig` that names how many
+ *   candidates each of the four time-range buckets should
+ *   collect. The definitive source of that config is the
+ *   topic's own `searchBuckets` field, which lands in PR-2's
+ *   schema change (Item 3 / C2 — the bucket layout is the
+ *   single source of truth for how many sources to collect).
+ *
+ *   Until PR-2 ships, this component derives a config from the
+ *   topic's existing `sourceCount`: the total is split evenly
+ *   across the four buckets, with any remainder placed on the
+ *   first bucket so the four counts always sum to the topic's
+ *   `sourceCount`. That even-split rule is the same rule PR-2's
+ *   migration script uses for legacy topics ("synthesize
+ *   searchBuckets from sourceCount split evenly across four
+ *   buckets"), so the transient derivation here is consistent
+ *   with the eventual schema value. When PR-2 lands, this
+ *   derivation is replaced with a direct read of
+ *   `topic.searchBuckets`; the rest of the component is
+ *   unchanged.
+ *
  * ── Why this panel is separate from SourceList ──────────────────
  *
- *   The plan's Part 1.9 file tree declares them as separate
- *   components, and the Sources tab renders them stacked (see
- *   `TopicDetail.tsx`). The split is deliberate: `SearchProgress`
- *   owns the ACTION (start a search, cancel it, retry it) and the
- *   live state that belongs to the search itself; `SourceList`
- *   owns the SELECTION UI (checkbox list, "Fetch Selected"
- *   button) once candidates exist. A user who is looking at the
- *   candidate list is past the "start a search" decision, and the
- *   two concerns do not belong in one component.
+ *   Same reasoning as before the refactor. The plan's Part 1.9
+ *   file tree declares them as separate components, and the
+ *   Sources tab renders them stacked (see `TopicDetail.tsx`).
+ *   `SearchProgress` owns the ACTION (start a search, cancel it,
+ *   retry it) and the live state that belongs to the search
+ *   itself; `SourceList` owns the SELECTION UI (checkbox list,
+ *   "Fetch Selected" button) and — per PR-3 — the four
+ *   collapsible per-bucket sections. A user who is looking at
+ *   the candidate list is past the "start a search" decision,
+ *   and the two concerns do not belong in one component.
  *
- * ── Why the runSearch call takes `topic.keywords` ───────────────
+ * ── Why the runFullSearch call takes `topic.keywords` ───────────
  *
- *   The `useResearch().runSearch(topicId, title, keywords?)`
- *   signature takes the topic's keyword array as its third
- *   argument. The Python search script carries the keywords in
- *   its marker payload for the renderer's display but does not
- *   use them to construct the search — the search runs on the
- *   title alone, per the plan's user journey. Passing the
- *   keywords through is what lets the store's candidate payload
- *   carry them; a caller that omitted the keywords would still
- *   get a working search, but the SEARCH_RESULT marker's payload
- *   would lack the `keywords` field and the renderer's metadata
- *   row would show an empty keyword count for the operation.
+ *   Same reasoning as before the refactor. The Python search
+ *   script carries the keywords in its marker payload for the
+ *   renderer's display but does not use them to construct the
+ *   search — the search runs on the title alone, per the plan's
+ *   user journey. Passing the keywords through lets the
+ *   `SEARCH_RESULT` marker's payload stay complete so the
+ *   renderer's metadata row can render a keyword count for the
+ *   operation.
  *
  * ── Why the component is NOT responsible for its own guard ──────
  *
- *   The Sources tab is only ever mounted inside the topic-detail
- *   page, which the layout's auth gate has already verified. The
- *   component therefore does not check "am I authenticated?" and
- *   does not check "does the topic exist?" — both are guaranteed
- *   by its mount site. The `topic` prop it receives is a
- *   populated `Topic` object from `activeTopic`; a future change
- *   that wanted to render the panel outside the detail page would
- *   need to add those guards.
-
+ *   Same reasoning as before the refactor. The Sources tab is
+ *   only ever mounted inside the topic-detail page, which the
+ *   layout's auth gate has already verified. The `topic` prop
+ *   it receives is a populated `Topic` object from
+ *   `activeTopic`.
+ *
  * ── What this component does NOT do ────────────────────────────
  *
  *   - It does not render the candidate list. That is
  *     `SourceList`'s job — see the sibling file.
  *
- *   - It does not persist the search results. The backend's
- *     `/api/topics` endpoint is the authoritative record of the
- *     topic's keywords and settings; the candidate list is
- *     transient UI state until the user selects which URLs to
- *     extract (at which point the extraction service turns each
- *     into a Document record on the backend).
+ *   - It does not persist the search results. See the store's
+ *     file header for the non-persistence rationale.
  *
  *   - It does not auto-start the search on mount. The user
  *     clicks "Start Search" — the plan's user journey makes the
  *     search a deliberate action, not something that fires the
  *     moment a page opens.
  *
- *   - It does not detect the captcha modal. When the Python script
- *     hits a captcha, the main process emits a `CAPTCHA_REQUIRED`
- *     marker and the automation store opens the modal (Session
- *     20). This component keeps showing the "searching" spinner
+ *   - It does not call `loadCandidates` on mount. The topic-
+ *     detail page owns the fetch-on-open behavior; this panel
+ *     only renders state the page (or the panel's own "Start
+ *     Search") has already populated.
+ *
+ *   - It does not detect the captcha modal. When the Python
+ *     script hits a captcha, the main process emits a
+ *     `CAPTCHA_REQUIRED` marker and the automation store opens
+ *     the modal. This panel keeps showing the SEARCHING state
  *     underneath — the modal is on top, and dismissing it either
  *     resumes or aborts the search, at which point this panel's
  *     state catches up via the store.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -103,6 +144,10 @@ import {
 } from 'lucide-react';
 
 import { useResearch } from '../hooks/useResearch.js';
+import type {
+  BucketConfig,
+  BucketKey,
+} from '../store/researchStore.js';
 import type { Topic } from '../../shared/types/index.js';
 
 // ============================================================
@@ -126,6 +171,52 @@ export interface SearchProgressProps {
 }
 
 // ============================================================
+//  Internal constants
+// ============================================================
+//  The four bucket keys, in run order. The array is typed as
+//  `readonly BucketKey[]` so the compiler guarantees every
+//  string is a legal member of the union — a typo would be a
+//  type error, not a silent runtime surprise.
+//
+//  The same order is what `runFullSearch` uses when it runs the
+//  four buckets sequentially; keeping the array here in the same
+//  order means the panel's "current bucket" line names the
+//  bucket the user would expect to see next.
+//
+//  `BUCKET_LABELS` maps each key to the display label the panel
+//  and the user journey use — "Any time", "Past year", etc. —
+//  declared as a `Record<BucketKey, string>` so the compiler
+//  enforces exhaustiveness.
+//
+//  `BUCKET_CONFIG_FIELD` maps each bucket key to the
+//  corresponding field name on `BucketConfig`. The two type
+//  systems use different casing on purpose — the keys are
+//  lowercase slugs matching the marker protocol, and the config
+//  fields are the camelCase names the store declares — and this
+//  map is the single place where the two are associated.
+
+const BUCKET_KEYS: readonly BucketKey[] = [
+  'anytime',
+  'year',
+  'month',
+  'week',
+];
+
+const BUCKET_LABELS: Record<BucketKey, string> = {
+  anytime: 'Any time',
+  year: 'Past year',
+  month: 'Past month',
+  week: 'Past week',
+};
+
+const BUCKET_CONFIG_FIELD: Record<BucketKey, keyof BucketConfig> = {
+  anytime: 'anyTime',
+  year: 'pastYear',
+  month: 'pastMonth',
+  week: 'pastWeek',
+};
+
+// ============================================================
 //  SearchProgress
 // ============================================================
 
@@ -136,32 +227,67 @@ export interface SearchProgressProps {
 export const SearchProgress = ({ topic }: SearchProgressProps) => {
   const {
     candidates,
+    candidatesByBucket,
     status,
     searchProgress,
     error,
-    runSearch,
+    runFullSearch,
     cancel,
     clearError,
-  } = useResearch();
+  } = useResearch(topic._id);
+
+  // ---- Bucket config derivation ----
+  // See the file header's "bucket config derivation" note for
+  // why this is derived from `topic.sourceCount` today and will
+  // read `topic.searchBuckets` once PR-2 lands. The even split
+  // with remainder on the first bucket guarantees the four
+  // counts always sum to `topic.sourceCount`.
+  const bucketConfig = useMemo((): BucketConfig => {
+    const total = topic.sourceCount;
+    const per = Math.floor(total / 4);
+    const remainder = total - per * 4;
+    return {
+      anyTime: per + remainder,
+      pastYear: per,
+      pastMonth: per,
+      pastWeek: per,
+    };
+  }, [topic.sourceCount]);
 
   // ---- Start / retry ----
   // The same handler serves both the idle-state "Start Search"
-  // button and the error-state "Retry" button — the underlying
-  // operation is identical. The `useCallback` dependency on
-  // `topic._id`, `topic.title`, and `topic.keywords` gives the
-  // handler a stable identity as long as the topic does not
-  // change; a component that lists this handler in a `useEffect`
-  // dependency array (a future "auto-retry on network recovery"
-  // feature) would not re-run the effect on every render.
+  // button, the error-state "Retry" button, and the complete
+  // state's "Search again" button — the underlying operation is
+  // identical in all three cases: run the four-bucket search.
+  //
+  // The `useCallback` dependencies are all stable references —
+  // `runFullSearch` is a `useCallback`-wrapped adapter from the
+  // hook, and the four topic fields are read from the immutable
+  // `Topic` prop. The handler therefore has a stable identity
+  // across renders, so a component that listed it in a
+  // `useEffect` dependency array would not re-run the effect on
+  // every render.
   //
   // `topic.keywords` is a `readonly string[]` on the type, but
-  // `runSearch` accepts a mutable `string[]`. The spread `[...]`
-  // produces a mutable copy, which is what the hook expects;
-  // passing the readonly array directly would be a type error
-  // under `exactOptionalPropertyTypes`' strict readonly handling.
+  // `runFullSearch` accepts a mutable `string[]`. The spread
+  // `[...]` produces a mutable copy, which is what the hook
+  // expects; passing the readonly array directly would be a
+  // type error under `exactOptionalPropertyTypes`' strict
+  // readonly handling.
   const handleStart = useCallback((): void => {
-    void runSearch(topic._id, topic.title, [...topic.keywords]);
-  }, [runSearch, topic._id, topic.title, topic.keywords]);
+    void runFullSearch(
+      topic._id,
+      topic.title,
+      [...topic.keywords],
+      bucketConfig
+    );
+  }, [
+    runFullSearch,
+    topic._id,
+    topic.title,
+    topic.keywords,
+    bucketConfig,
+  ]);
 
   // ---- Cancel ----
   const handleCancel = useCallback((): void => {
@@ -170,32 +296,111 @@ export const SearchProgress = ({ topic }: SearchProgressProps) => {
 
   // ---- Dismiss error ----
   const handleDismiss = useCallback((): void => {
-    clearError();
-  }, [clearError]);
+    clearError(topic._id);
+  }, [clearError, topic._id]);
+
+  // ---- Derived per-bucket progress ----
+  //
+  // `searchProgress` from the hook is a four-bucket record: each
+  // bucket's slot is either `null` (not running) or a live
+  // `SearchProgress` object. The `runFullSearch` action runs the
+  // four buckets sequentially, so at most one slot is non-null
+  // at any moment — the currently-active bucket.
+  //
+  // `currentBucket` is the key of that bucket, or `null` when no
+  // bucket is currently running (which happens only in the
+  // transition between two buckets' runs, a sub-second window).
+  //
+  // `foundTotal` sums the completed buckets' candidate counts
+  // (from `candidatesByBucket`) plus the currently-active
+  // bucket's live count (from its progress slot). The two
+  // sources are mutually exclusive per bucket: a completed
+  // bucket's progress is cleared and its candidates are in the
+  // candidates record; a running bucket's candidates record is
+  // empty and its count is in the progress slot.
+  //
+  // `requestedTotal` is the sum of the four configured counts
+  // from `bucketConfig`. It does not change during a run.
+  const currentBucket: BucketKey | null = useMemo(() => {
+    for (const key of BUCKET_KEYS) {
+      if (searchProgress[key] !== null) {
+        return key;
+      }
+    }
+    return null;
+  }, [searchProgress]);
+
+  const foundTotal = useMemo((): number => {
+    let total = 0;
+    for (const key of BUCKET_KEYS) {
+      total += candidatesByBucket[key].length;
+      total += searchProgress[key]?.found ?? 0;
+    }
+    return total;
+  }, [candidatesByBucket, searchProgress]);
+
+  const requestedTotal = useMemo((): number => {
+    return (
+      bucketConfig.anyTime +
+      bucketConfig.pastYear +
+      bucketConfig.pastMonth +
+      bucketConfig.pastWeek
+    );
+  }, [bucketConfig]);
 
   // ---- State 1: SEARCHING ----
   // The live progress panel. Shown while `status === 'searching'`
   // regardless of how many candidates have been collected so far —
   // the whole point is that the user can see partial progress as
   // it happens.
+  //
+  // Two progress indicators are shown side by side:
+  //
+  //   * The overall progress bar. Its numerator is `foundTotal`
+  //     (sum of completed buckets' candidate counts plus the
+  //     running bucket's live count) and its denominator is
+  //     `requestedTotal` (the sum of the four configured bucket
+  //     counts). The percentage is derived from the ratio and
+  //     clamped to 100.
+  //
+  //   * The current bucket's own line. The bucket is the one
+  //     whose progress slot is non-null; its own count comes
+  //     from that slot's `found` field, and its requested count
+  //     comes from the corresponding field on `bucketConfig`.
+  //     The bucket's label is looked up from `BUCKET_LABELS`.
+  //
+  // A user who has configured one bucket with zero candidates
+  // will not see that bucket's progress — `runFullSearch` skips
+  // zero-count buckets entirely (Q8.3), and the skipped buckets
+  // contribute zero to both the numerator and the denominator.
   if (status === 'searching') {
-    const progressText = searchProgress
-      ? `Page ${searchProgress.page} · ${searchProgress.found} candidates found`
-      : 'Starting search…';
+    const currentBucketProgress =
+      currentBucket !== null ? searchProgress[currentBucket] : null;
+    const currentRequested =
+      currentBucket !== null
+        ? bucketConfig[BUCKET_CONFIG_FIELD[currentBucket]]
+        : 0;
+    const overallPercent =
+      requestedTotal > 0
+        ? Math.min(
+            100,
+            Math.round((foundTotal / requestedTotal) * 100)
+          )
+        : 0;
 
     return (
       <div
         role="status"
         aria-live="polite"
         className={
-          'flex items-center gap-3 rounded-xl border ' +
+          'flex items-start gap-3 rounded-xl border ' +
           'border-neutral-200 bg-background p-4 ' +
           'dark:border-neutral-800'
         }
       >
         <Loader2
           size={20}
-          className="shrink-0 animate-spin text-primary"
+          className="mt-0.5 shrink-0 animate-spin text-primary"
           aria-hidden="true"
         />
         <div className="min-w-0 flex-1">
@@ -207,14 +412,51 @@ export const SearchProgress = ({ topic }: SearchProgressProps) => {
           >
             Searching the web…
           </p>
-          <p
-            className={
-              'mt-0.5 text-xs text-neutral-500 ' +
-              'dark:text-neutral-400'
-            }
-          >
-            {progressText}
-          </p>
+
+          {/* ---- Overall progress ---- */}
+          <div className="mt-2">
+            <div
+              className={
+                'flex items-center justify-between text-xs ' +
+                'text-neutral-500 dark:text-neutral-400'
+              }
+            >
+              <span>Overall</span>
+              <span className="tabular-nums">
+                {foundTotal} of {requestedTotal} · {overallPercent}%
+              </span>
+            </div>
+            <div
+              className={
+                'mt-1 h-1.5 w-full overflow-hidden rounded-full ' +
+                'bg-neutral-200 dark:bg-neutral-800'
+              }
+              role="progressbar"
+              aria-valuenow={overallPercent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div
+                className="h-full bg-primary transition-all duration-300"
+                style={{ width: `${overallPercent}%` }}
+              />
+            </div>
+          </div>
+
+          {/* ---- Current bucket progress ---- */}
+          {currentBucket !== null && currentBucketProgress !== null && (
+            <p
+              className={
+                'mt-2 text-xs text-neutral-500 ' +
+                'dark:text-neutral-400'
+              }
+            >
+              {BUCKET_LABELS[currentBucket]}:{' '}
+              <span className="tabular-nums">
+                {currentBucketProgress.found} of {currentRequested}
+              </span>
+            </p>
+          )}
         </div>
         <button
           type="button"

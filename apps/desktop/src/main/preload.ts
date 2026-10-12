@@ -16,8 +16,12 @@
  * `ipcRenderer.invoke(channel, ...args)` and awaits the main
  * process's response. The main process registers a handler for
  * each channel via `ipcMain.handle(...)`; the channels are named
- * `namespace:action` and the namespaces here mirror the feature
- * folders under `src/features/` one-for-one.
+ * `namespace:action`, and each namespace groups the channels
+ * that serve one related area of the app — the feature folders
+ * under `src/features/` for the major features, and a small
+ * number of cross-cutting groups (`config`, `utils`, `window`,
+ * `prompts`, `deepseek`) that either cut across features or
+ * bundle a coherent sub-surface of one.
  *
  * Why the API is typed as `Promise<ApiResponse<T>>`:
  *
@@ -115,6 +119,83 @@ import type {
  */
 type IpcListener = (...args: unknown[]) => void;
 
+
+/**
+ * The four time-range buckets the bucketed search queries. The
+ * same union the renderer's research store declares; kept in
+ * sync by hand because the shared types module does not export a
+ * canonical alias for it.
+ */
+type BucketKey = 'anytime' | 'year' | 'month' | 'week';
+
+/**
+ * One search-candidate page. The same shape as the research
+ * store's `SearchCandidate` and the main-process
+ * `searchService.SearchCandidate`.
+ */
+interface SearchCandidate {
+  url: string;
+  title: string;
+  snippet: string;
+  platform: string;
+}
+
+/**
+ * A topic's candidate list, split by time-range bucket. Every
+ * bucket key is required and every value is an array — an empty
+ * array is the correct representation for "searched but found
+ * nothing".
+ */
+type CandidatesByBucket = Record<BucketKey, SearchCandidate[]>;
+
+/**
+ * One failed-extraction record, as stored in the topic's
+ * `failures.json` file.
+ */
+interface FailedUrlRecord {
+  url: string;
+  reason: string;
+  attemptCount: number;
+  lastAttemptAt: string;
+  errorMessage: string;
+}
+
+/**
+ * Per-bundle contents selection. Mirrors the checkboxes the
+ * DownloadBundleModal renders; the main process uses whichever
+ * flags are true to decide what goes into the ZIP.
+ */
+interface BundleOptions {
+  includeArticle: boolean;
+  includeSources: boolean;
+  includeReports: boolean;
+  includePrompt: boolean;
+  includePreset: boolean;
+  includeMetadata: boolean;
+}
+
+/**
+ * The result of a prompt-template validation. A discriminated
+ * union rather than a shape with optional fields, so a caller
+ * cannot accidentally read `error` or `line` from a successful
+ * validation.
+ */
+type PromptValidationResult =
+  | { valid: true }
+  | { valid: false; error: string; line: number };
+
+/**
+ * The cached status of the DeepSeek session, as reported by the
+ * main process's launch-time or on-demand check.
+ */
+interface DeepSeekSessionStatus {
+  /** Whether the session is currently live. */
+  live: boolean;
+  /** ISO-8601 timestamp of when the check ran. */
+  checkedAt: string;
+}
+
+
 /**
  * The auth namespace — login, logout, and reading the cached
  * user profile.
@@ -201,22 +282,25 @@ interface TopicsNamespace {
  */
 interface ResearchNamespace {
   /**
-   * Run the search step for a topic. Resolves once the search
-   * has finished and returns the candidate URLs it found. Live
-   * progress arrives through the `research:progress` event, not
-   * through this promise.
+   * Run the search step for a topic on one time-range bucket.
+   * Resolves once the search has finished and returns the
+   * candidate URLs it found. Live progress arrives through the
+   * marker channel, not through this promise. The renderer
+   * invokes this method once per configured bucket, sequentially,
+   * per the plan's Q8.7 / C5 decision.
    */
   search: (
     topicId: string,
     title: string,
-    keywords?: string[]
+    keywords: string[],
+    timeRange: BucketKey
   ) => Promise<ApiResponse<{ candidates: string[] }>>;
 
   /**
    * Fetch and extract the selected candidate URLs. Resolves
    * once every extraction has completed (or failed) and returns
    * the list of documents saved. Live progress arrives through
-   * `research:progress`.
+   * the marker channel.
    */
   extract: (
     topicId: string,
@@ -230,6 +314,31 @@ interface ResearchNamespace {
    * active-task list.
    */
   cancel: (topicId: string) => Promise<ApiResponse<null>>;
+
+  /**
+   * Read the topic's saved candidate list, split by time-range
+   * bucket, from the topic's on-disk `candidates.json` file.
+   * Returns an empty-bucket record when the file is absent —
+   * a first-time topic has no saved candidates, which is a
+   * legitimate state rather than an error.
+   */
+  getCandidates: (
+    topicId: string
+  ) => Promise<ApiResponse<CandidatesByBucket>>;
+
+  /**
+   * Read the topic's failed-URL records from its `failures.json`
+   * file. Returns an empty array when the file is absent.
+   */
+  getFailures: (
+    topicId: string
+  ) => Promise<ApiResponse<FailedUrlRecord[]>>;
+
+  /**
+   * Delete the topic's `failures.json` file. Invoked when the
+   * user dismisses the last failed URL from the list.
+   */
+  clearFailures: (topicId: string) => Promise<ApiResponse<null>>;
 }
 
 /**
@@ -250,8 +359,8 @@ interface WriterNamespace {
   /**
    * Kick off a generate-the-article run for the topic. Resolves
    * once the writer process has finished and the article has
-   * been persisted. Live progress arrives through
-   * `writer:progress`.
+   * been persisted. Live progress arrives through the marker
+   * channel.
    */
   generate: (
     topicId: string
@@ -259,6 +368,18 @@ interface WriterNamespace {
 
   /** Cancel any in-flight writer run for the topic. */
   cancel: (topicId: string) => Promise<ApiResponse<null>>;
+
+  /**
+   * Read the topic's latest article from the backend. Used by
+   * the Article tab on first open of each topic so a cold mount
+   * shows the previously-generated article rather than the
+   * empty-state prompt. Returns `data: null` (a success) when
+   * the topic has no article yet; an error envelope only when
+   * the backend call itself fails.
+   */
+  getLatest: (
+    topicId: string
+  ) => Promise<ApiResponse<Article | null>>;
 }
 
 /**
@@ -283,6 +404,32 @@ interface ExportNamespace {
   docx: (articleId: string) => Promise<ApiResponse<string | null>>;
   md: (articleId: string) => Promise<ApiResponse<string | null>>;
   txt: (articleId: string) => Promise<ApiResponse<string | null>>;
+
+  /**
+   * Assemble the topic's full archive — article, sources,
+   * reports, prompt used, preset used, and topic metadata — as
+   * a ZIP at the destination the user chose (or the configured
+   * default). The `options` argument selects which artifacts to
+   * include. Returns the ZIP's absolute path on success, or
+   * `null` when the user cancelled the Save-As dialog.
+   */
+  bundle: (
+    topicId: string,
+    options: BundleOptions
+  ) => Promise<ApiResponse<string | null>>;
+
+  /**
+   * Download the topic's validation report alone, rendered as
+   * Markdown. A shortcut for the "Save the report" flow that
+   * does not require assembling the full bundle.
+   */
+  report: (topicId: string) => Promise<ApiResponse<string | null>>;
+
+  /**
+   * Download the topic's source list alone, as a plain-text or
+   * CSV index. A shortcut for the "Save the sources" flow.
+   */
+  sources: (topicId: string) => Promise<ApiResponse<string | null>>;
 }
 
 /**
@@ -362,6 +509,67 @@ interface WindowNamespace {
   notify: () => Promise<ApiResponse<null>>;
 }
 
+
+
+/**
+ * The prompts namespace — CRUD and validation over the writer's
+ * prompt templates. The two-folder model splits built-in prompts
+ * (read-only, shipped with the app) from user prompts (editable,
+ * stored under `<userData>/writespeare/prompts/`). The `list`
+ * method returns the two groups separately so the Settings
+ * editor can render them as distinct sections.
+ *
+ * The `validate` method renders the given content as a Jinja2
+ * template with dummy variables and reports any syntax error
+ * before the template is written to disk. A broken template
+ * therefore never reaches the writer step.
+ */
+interface PromptsNamespace {
+  /** List the built-in and user prompt filenames. */
+  list: () => Promise<
+    ApiResponse<{ builtin: string[]; user: string[] }>
+  >;
+
+  /** Read one prompt file's content. */
+  read: (name: string) => Promise<ApiResponse<{ content: string }>>;
+
+  /** Create or overwrite one user prompt file. */
+  write: (name: string, content: string) => Promise<ApiResponse<null>>;
+
+  /** Delete one user prompt file. Deleting a user file that
+   *  shadows a built-in reverts the app to the built-in. */
+  delete: (name: string) => Promise<ApiResponse<null>>;
+
+  /** Validate Jinja2 syntax without persisting. */
+  validate: (
+    content: string
+  ) => Promise<ApiResponse<PromptValidationResult>>;
+}
+
+/**
+ * The deepseek namespace — the DeepSeek session checks the
+ * writer needs.
+ *
+ * The session is a browser session, held in the app's persistent
+ * Chrome profile. There are no credentials for this layer to
+ * manage — the user signs in by hand in the Chrome window, and
+ * the profile keeps the session alive across app restarts. The
+ * two methods here only ask whether the session is currently
+ * live and open the Chrome window to the login URL when it is
+ * not.
+ */
+interface DeepSeekNamespace {
+  /** Check whether the DeepSeek session is currently live, via
+   *  the triple-check the plan's N3 decision specifies. */
+  checkSession: () => Promise<ApiResponse<DeepSeekSessionStatus>>;
+
+  /** Open the app's Chrome window at the DeepSeek login URL. */
+  openLogin: () => Promise<ApiResponse<null>>;
+}
+
+
+
+
 /**
  * The full API surface exposed on `window.electronAPI`.
  *
@@ -378,6 +586,8 @@ export interface ElectronAPI {
   research: ResearchNamespace;
   documents: DocumentsNamespace;
   writer: WriterNamespace;
+  prompts: PromptsNamespace;
+  deepseek: DeepSeekNamespace;
   validation: ValidationNamespace;
   export: ExportNamespace;
   settings: SettingsNamespace;
@@ -539,16 +749,23 @@ const api: ElectronAPI = {
 
   // ---- Research ----
   research: {
-    search: (topicId, title, keywords) =>
+    search: (topicId, title, keywords, timeRange) =>
       invoke<{ candidates: string[] }>(
         'research:search',
         topicId,
         title,
-        keywords
+        keywords,
+        timeRange
       ),
     extract: (topicId, urls) =>
       invoke<{ savedCount: number }>('research:extract', topicId, urls),
     cancel: (topicId) => invoke<null>('research:cancel', topicId),
+    getCandidates: (topicId) =>
+      invoke<CandidatesByBucket>('research:getCandidates', topicId),
+    getFailures: (topicId) =>
+      invoke<FailedUrlRecord[]>('research:getFailures', topicId),
+    clearFailures: (topicId) =>
+      invoke<null>('research:clearFailures', topicId),
   },
 
   // ---- Documents ----
@@ -562,6 +779,8 @@ const api: ElectronAPI = {
   writer: {
     generate: (topicId) => invoke<Article>('writer:generate', topicId),
     cancel: (topicId) => invoke<null>('writer:cancel', topicId),
+    getLatest: (topicId) =>
+      invoke<Article | null>('writer:getLatest', topicId),
   },
 
   // ---- Validation ----
@@ -575,6 +794,12 @@ const api: ElectronAPI = {
     docx: (articleId) => invoke<string | null>('export:docx', articleId),
     md: (articleId) => invoke<string | null>('export:md', articleId),
     txt: (articleId) => invoke<string | null>('export:txt', articleId),
+    bundle: (topicId, options) =>
+      invoke<string | null>('export:bundle', topicId, options),
+    report: (topicId) =>
+      invoke<string | null>('export:report', topicId),
+    sources: (topicId) =>
+      invoke<string | null>('export:sources', topicId),
   },
 
   // ---- Settings ----
@@ -603,6 +828,28 @@ const api: ElectronAPI = {
   window: {
     notify: () => invoke<null>('window:notify'),
   },
+
+  
+  // ---- Prompts ----
+  prompts: {
+    list: () =>
+      invoke<{ builtin: string[]; user: string[] }>('prompts:list'),
+    read: (name) =>
+      invoke<{ content: string }>('prompts:read', name),
+    write: (name, content) =>
+      invoke<null>('prompts:write', name, content),
+    delete: (name) => invoke<null>('prompts:delete', name),
+    validate: (content) =>
+      invoke<PromptValidationResult>('prompts:validate', content),
+  },
+
+  // ---- DeepSeek ----
+  deepseek: {
+    checkSession: () =>
+      invoke<DeepSeekSessionStatus>('deepseek:checkSession'),
+    openLogin: () => invoke<null>('deepseek:openLogin'),
+  },
+
 
   // ---- Event registry ----
   on,

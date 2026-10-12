@@ -2,28 +2,29 @@
  * documentStore — the renderer's state for the documents feature.
  *
  * Holds the state that drives the Documents tab on the topic-detail
- * page:
+ * page. Every piece of per-topic state is a record keyed by the
+ * topic's ID, so switching between topics never clobbers the
+ * previous topic's data:
  *
- *   documents         — the list of `.md` doc files attached to
- *                       the active topic, as synthesized by the
- *                       main process's `documentService`.
- *   activeTopicId     — which topic the list belongs to, so a
- *                       second topic's documents do not
- *                       accidentally replace the first's.
- *   selectedDocument  — the document the user has clicked for
- *                       preview, or null when no preview modal
- *                       is open.
- *   status            — the store's async lifecycle state.
- *   error             — the last error message, or null.
+ *   documentsByTopic       — per-topic list of `.md` doc files
+ *                            attached to that topic, as
+ *                            synthesized by the main process's
+ *                            `documentService`.
+ *   activeTopicId          — the topic that most recently loaded
+ *                            its documents. A tracking field only.
+ *   selectedDocumentByTopic — per-topic preview target, or null
+ *                            when the topic has no preview open.
+ *   statusByTopic          — per-topic async lifecycle state.
+ *   errorByTopic           — per-topic last error message, or null.
  *
  * And the actions the components call to drive those operations:
  *
  *   loadDocuments     — fetch the list of doc files for a topic.
  *   deleteDocument    — remove a doc file from disk and from the
- *                       local list.
- *   selectDocument    — set or clear the preview target.
- *   clearDocuments    — empty the list (a "topic closed" action).
- *   clearError        — dismiss the last error.
+ *                       topic's local list.
+ *   selectDocument    — set or clear one topic's preview target.
+ *   clearDocuments    — empty one topic's list.
+ *   clearError        — dismiss one topic's last error.
  *   reset             — return every field to its initial value.
  *
  * ── Why the store is NOT persisted ─────────────────────────────
@@ -55,23 +56,25 @@
  *   single state update that follows — the same reason
  *   `topicStore.ts`'s `deleteTopic` reaches the IPC layer.
  *
- * ── Why `activeTopicId` is tracked ─────────────────────────────
+ * ── The per-topic design ───────────────────────────────────────
  *
- *   The store is single-topic-scoped by design — the Documents
- *   tab shows one topic's docs at a time. Tracking which topic
- *   the list belongs to lets `loadDocuments` skip a re-fetch when
- *   the same topic is already loaded, and it lets a future
- *   "navigate to topic B without reloading A's docs" flow
- *   distinguish the two cases. Today the only caller is the
- *   Documents tab on mount, which always passes the same topic
- *   the tab was opened for; the field is present for the cases
- *   where that invariant might not hold.
+ *   Every piece of per-topic state lives in a record keyed by the
+ *   topic's ID — `documentsByTopic`, `selectedDocumentByTopic`,
+ *   `statusByTopic`, and `errorByTopic`. Switching between topics
+ *   does not clobber any previous topic's state; the store simply
+ *   holds a slot for every topic that has been loaded this
+ *   session.
  *
- *   The `activeTopicId` is set at the start of `loadDocuments`
- *   and is NOT cleared by `clearDocuments` — a caller that
- *   explicitly clears the list without changing topics is
- *   signalling "the list is empty for the current topic", not
- *   "no topic is active". `reset` is what clears the id.
+ *   `activeTopicId` is retained as a tracking field — the topic
+ *   that most recently began loading its documents. It is not
+ *   read by any action or marker handler; it exists for
+ *   diagnostic surfaces and for a future caller that wants to
+ *   know which topic the user is currently looking at without
+ *   threading that value through component props.
+ *
+ *   The `activeTopicId` is set at the start of `loadDocuments`.
+ *   `clearDocuments` and `reset` do not touch it — the id is a
+ *   session-level fact about navigation, not per-topic state.
  *
  * ── What this store does NOT do ────────────────────────────────
  *
@@ -98,6 +101,10 @@
  *     the user reviews the docs and moves on to the writer step.
  *     If a future session adds a multi-select for batch delete,
  *     that state belongs here; today it is not needed.
+ *
+ *   - It does not filter or scope to a single active topic. Every
+ *     action takes the topic's ID as an argument, and the store
+ *     holds each topic's data independently.
  */
 
 import { create } from 'zustand';
@@ -133,82 +140,106 @@ export type DocumentStoreStatus = 'idle' | 'loading' | 'error';
 export interface DocumentStoreState {
   // ---- Data ----
 
-  /** The documents for the active topic, in the order the main
-   *  process returned them (which preserves the extraction
-   *  pipeline's batch order). */
-  documents: Document[];
-
-  /** The topic the list belongs to, or null when no topic has
-   *  been loaded. Set at the start of `loadDocuments`. */
+  /** The topic that most recently began loading its documents,
+   *  or null before any load. A tracking field only; no action
+   *  or handler reads it to scope behavior. */
   activeTopicId: string | null;
 
-  /** The document the user has clicked for preview, or null when
-   *  no preview is open. */
-  selectedDocument: Document | null;
+  /** Per-topic document lists, in the order the main process
+   *  returned them (which preserves the extraction pipeline's
+   *  batch order). Absence of a topic's key means "not yet
+   *  loaded". */
+  documentsByTopic: Record<string, Document[]>;
 
-  /** The store's async lifecycle state. */
-  status: DocumentStoreStatus;
+  /** Per-topic preview target — the document the user clicked
+   *  for preview, or null when no preview is open for that
+   *  topic. Absence of a key is treated as null. */
+  selectedDocumentByTopic: Record<string, Document | null>;
 
-  /** The last error message, or null. */
-  error: string | null;
+  /** Per-topic async lifecycle state. Absence of a key is
+   *  treated as `'idle'`. */
+  statusByTopic: Record<string, DocumentStoreStatus>;
+
+  /** Per-topic last error message, or null. */
+  errorByTopic: Record<string, string | null>;
 
   // ---- Async actions ----
 
   /**
    * Load the list of doc files for a topic. Invokes the main
-   * process's `documents:list` IPC channel via the preload,
-   * updates `documents` and `activeTopicId` on success, and sets
-   * `status` / `error` on both success and failure.
+   * process's `documents:list` IPC channel via the preload and
+   * writes this topic's slots on success.
    *
    * An empty list is a legitimate result — a topic whose
    * extraction has not run yet has no doc files. The store
-   * distinguishes that case from a failure by the `status` field:
-   * `'idle'` with `documents.length === 0` is "loaded and empty",
+   * distinguishes that case from a failure by the status:
+   * `'idle'` with an empty list is "loaded and empty",
    * `'error'` is "loading failed".
    */
   loadDocuments: (topicId: string) => Promise<void>;
 
   /**
-   * Delete a single doc file. Invokes the main process's
-   * `documents:delete` IPC channel via the preload; on success,
-   * removes the document from `documents` and clears
-   * `selectedDocument` if it was the deleted one.
+   * Delete a single doc file for a topic. Invokes the main
+   * process's `documents:delete` IPC channel via the preload;
+   * on success, removes the document from the topic's list and
+   * clears the topic's selected document if it was the one
+   * being deleted.
    *
    * Resolves with `true` on success, `false` on failure. The
    * boolean lets the caller decide whether to fire a success
    * toast.
    *
+   * @param topicId    - The owning topic's ID. Identifies which
+   *                     per-topic slot to mutate.
    * @param documentId - The document's `_id` field, which the
    *                     main process's service sets to the file's
    *                     absolute path. See `documentService.ts`'s
    *                     header for the rationale on `_id`
    *                     carrying a path.
    */
-  deleteDocument: (documentId: string) => Promise<boolean>;
+  deleteDocument: (
+    topicId: string,
+    documentId: string
+  ) => Promise<boolean>;
 
   // ---- Sync actions ----
 
   /**
-   * Set the document the user is currently previewing, or null
-   * to close the preview. Does not read the file — the
-   * `Document` object already carries the file's `content`
+   * Set one topic's currently-previewing document, or null to
+   * close the preview for that topic. Does not read the file —
+   * the `Document` object already carries the file's `content`
    * field, which the main process populated from disk when the
    * list was fetched.
    */
-  selectDocument: (document: Document | null) => void;
+  selectDocument: (topicId: string, document: Document | null) => void;
 
   /**
-   * Empty the document list and clear the selected document. The
-   * `activeTopicId` is left as-is — see the file header for why.
+   * Empty one topic's document list and clear its selected
+   * document.
    */
-  clearDocuments: () => void;
+  clearDocuments: (topicId: string) => void;
 
-  /** Clear the last error message and, if the status was
-   *  `'error'`, return it to `'idle'`. */
-  clearError: () => void;
+  /** Clear one topic's last error message and, if that topic's
+   *  status was `'error'`, return it to `'idle'`. */
+  clearError: (topicId: string) => void;
 
   /** Reset every field to its initial value. */
   reset: () => void;
+
+  // ---- Per-topic getters ----
+
+  /** Return the topic's document list, or an empty array when
+   *  none is loaded. */
+  getDocuments: (topicId: string) => Document[];
+
+  /** Return the topic's currently-selected document, or null. */
+  getSelectedDocument: (topicId: string) => Document | null;
+
+  /** Return the topic's async lifecycle state. */
+  getStatus: (topicId: string) => DocumentStoreStatus;
+
+  /** Return the topic's last error message, or null. */
+  getError: (topicId: string) => string | null;
 }
 
 // ============================================================
@@ -221,11 +252,11 @@ export interface DocumentStoreState {
  * duplicating the literals.
  */
 const INITIAL_STATE = {
-  documents: [] as Document[],
   activeTopicId: null as string | null,
-  selectedDocument: null as Document | null,
-  status: 'idle' as DocumentStoreStatus,
-  error: null as string | null,
+  documentsByTopic: {} as Record<string, Document[]>,
+  selectedDocumentByTopic: {} as Record<string, Document | null>,
+  statusByTopic: {} as Record<string, DocumentStoreStatus>,
+  errorByTopic: {} as Record<string, string | null>,
 };
 
 // ============================================================
@@ -252,34 +283,50 @@ export const useDocumentStore = create<DocumentStoreState>((set, get) => ({
   // ============================================================
 
   loadDocuments: async (topicId: string): Promise<void> => {
-    // Flip the status to loading and clear any previous error.
-    // The `activeTopicId` is set immediately, before the IPC
-    // round trip — so a caller that inspects the store while
-    // the fetch is in flight sees the correct topic ID rather
-    // than the previous topic's.
-    set({
+    // Flip this topic's status to loading and clear its previous
+    // error. The `activeTopicId` tracking field is set to the
+    // topic being loaded.
+    set((state) => ({
       activeTopicId: topicId,
-      status: 'loading',
-      error: null,
-    });
+      statusByTopic: {
+        ...state.statusByTopic,
+        [topicId]: 'loading',
+      },
+      errorByTopic: {
+        ...state.errorByTopic,
+        [topicId]: null,
+      },
+    }));
 
     try {
       const result = await window.electronAPI.documents.list(topicId);
 
       if (result.success && result.data) {
-        // Replace the entire list. Unlike `topicStore.loadTopics`,
-        // there is no "prepend" case — the documents list is
-        // always the complete set for the topic, not an
-        // append-only collection.
-        set({
-          documents: result.data,
-          status: 'idle',
-        });
+        // Replace this topic's entire list. Unlike
+        // `topicStore.loadTopics`, there is no "prepend" case —
+        // the documents list is always the complete set for the
+        // topic, not an append-only collection.
+        set((state) => ({
+          documentsByTopic: {
+            ...state.documentsByTopic,
+            [topicId]: result.data ?? [],
+          },
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'idle',
+          },
+        }));
       } else {
-        set({
-          status: 'error',
-          error: result.error ?? 'Failed to load documents.',
-        });
+        set((state) => ({
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'error',
+          },
+          errorByTopic: {
+            ...state.errorByTopic,
+            [topicId]: result.error ?? 'Failed to load documents.',
+          },
+        }));
       }
     } catch (err) {
       // The `window.electronAPI.documents.list` call itself can
@@ -290,17 +337,26 @@ export const useDocumentStore = create<DocumentStoreState>((set, get) => ({
       // the response-envelope failure path produces, so the
       // component's render logic does not need two cases.
       console.error('[documentStore] loadDocuments failed:', err);
-      set({
-        status: 'error',
-        error:
-          err instanceof Error
-            ? err.message
-            : 'Unable to load documents.',
-      });
+      set((state) => ({
+        statusByTopic: {
+          ...state.statusByTopic,
+          [topicId]: 'error',
+        },
+        errorByTopic: {
+          ...state.errorByTopic,
+          [topicId]:
+            err instanceof Error
+              ? err.message
+              : 'Unable to load documents.',
+        },
+      }));
     }
   },
 
-  deleteDocument: async (documentId: string): Promise<boolean> => {
+  deleteDocument: async (
+    topicId: string,
+    documentId: string
+  ): Promise<boolean> => {
     // Unlike the load and search actions, `deleteDocument` does
     // not flip `status` to `loading`. A delete is usually
     // initiated from a row in the documents list, and the list
@@ -313,33 +369,52 @@ export const useDocumentStore = create<DocumentStoreState>((set, get) => ({
       const result = await window.electronAPI.documents.remove(documentId);
 
       if (result.success) {
-        set((state) => ({
-          documents: state.documents.filter(
-            (doc) => doc._id !== documentId
-          ),
-          // Clear the selected document if it was the one
-          // being deleted — otherwise the preview modal would
-          // keep showing a document that no longer exists on
-          // disk.
-          selectedDocument:
-            state.selectedDocument !== null &&
-            state.selectedDocument._id === documentId
-              ? null
-              : state.selectedDocument,
-        }));
+        set((state) => {
+          const topicDocs = state.documentsByTopic[topicId] ?? [];
+          const topicSelected =
+            state.selectedDocumentByTopic[topicId] ?? null;
+          return {
+            documentsByTopic: {
+              ...state.documentsByTopic,
+              [topicId]: topicDocs.filter(
+                (doc) => doc._id !== documentId
+              ),
+            },
+            // Clear this topic's selected document if it was the
+            // one being deleted — otherwise the preview modal
+            // would keep showing a document that no longer exists
+            // on disk.
+            selectedDocumentByTopic: {
+              ...state.selectedDocumentByTopic,
+              [topicId]:
+                topicSelected !== null &&
+                topicSelected._id === documentId
+                  ? null
+                  : topicSelected,
+            },
+          };
+        });
         return true;
       }
 
-      set({ error: result.error ?? 'Failed to delete document.' });
+      set((state) => ({
+        errorByTopic: {
+          ...state.errorByTopic,
+          [topicId]: result.error ?? 'Failed to delete document.',
+        },
+      }));
       return false;
     } catch (err) {
       console.error('[documentStore] deleteDocument failed:', err);
-      set({
-        error:
-          err instanceof Error
-            ? err.message
-            : 'Unable to delete document.',
-      });
+      set((state) => ({
+        errorByTopic: {
+          ...state.errorByTopic,
+          [topicId]:
+            err instanceof Error
+              ? err.message
+              : 'Unable to delete document.',
+        },
+      }));
       return false;
     }
   },
@@ -348,26 +423,69 @@ export const useDocumentStore = create<DocumentStoreState>((set, get) => ({
   //  Sync actions
   // ============================================================
 
-  selectDocument: (document: Document | null): void => {
-    set({ selectedDocument: document });
+  selectDocument: (topicId: string, document: Document | null): void => {
+    set((state) => ({
+      selectedDocumentByTopic: {
+        ...state.selectedDocumentByTopic,
+        [topicId]: document,
+      },
+    }));
   },
 
-  clearDocuments: (): void => {
-    set({
-      documents: [],
-      selectedDocument: null,
-    });
+  clearDocuments: (topicId: string): void => {
+    set((state) => ({
+      documentsByTopic: {
+        ...state.documentsByTopic,
+        [topicId]: [],
+      },
+      selectedDocumentByTopic: {
+        ...state.selectedDocumentByTopic,
+        [topicId]: null,
+      },
+    }));
   },
 
-  clearError: (): void => {
-    set({ error: null });
-    if (get().status === 'error') {
-      set({ status: 'idle' });
+  clearError: (topicId: string): void => {
+    set((state) => ({
+      errorByTopic: {
+        ...state.errorByTopic,
+        [topicId]: null,
+      },
+    }));
+    if (get().statusByTopic[topicId] === 'error') {
+      set((state) => ({
+        statusByTopic: {
+          ...state.statusByTopic,
+          [topicId]: 'idle',
+        },
+      }));
     }
   },
 
   reset: (): void => {
     set({ ...INITIAL_STATE });
+  },
+  
+  // ---- Per-topic getters ----
+  // Each getter reads one topic's value from the corresponding
+  // per-topic record, with a safe default for a topic that has
+  // no entry yet. The getters are convenience wrappers over the
+  // records, not a second source of truth.
+
+  getDocuments: (topicId: string): Document[] => {
+    return get().documentsByTopic[topicId] ?? [];
+  },
+
+  getSelectedDocument: (topicId: string): Document | null => {
+    return get().selectedDocumentByTopic[topicId] ?? null;
+  },
+
+  getStatus: (topicId: string): DocumentStoreStatus => {
+    return get().statusByTopic[topicId] ?? 'idle';
+  },
+
+  getError: (topicId: string): string | null => {
+    return get().errorByTopic[topicId] ?? null;
   },
 }));
 

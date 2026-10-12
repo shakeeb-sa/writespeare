@@ -12,17 +12,36 @@
  *   a topic ID. The pattern matches every other component
  *   rendered inside `TopicDetail.tsx` — the parent already has
  *   the topic in hand, and passing it through is zero friction.
- *   The component uses `topic._id` (the key for the documents
- *   load and the file path the main process derives), `topic._id`
- *   again (for the empty-state guidance about where the docs land
- *   on disk), and nothing else. A future reader who wonders "why
- *   the whole topic?" sees the answer: consistency with the
- *   sibling components that render inside the same tab.
+ *
+ *   The `topic._id` value is used in five places:
+ *
+ *     1. As the hook argument (`useDocuments(topic._id)`), which
+ *        scopes every data field and action to this topic.
+ *     2. As the first argument to `loadDocuments`, `deleteDocument`,
+ *        `selectDocument`, and `clearError` — every per-topic
+ *        action on the store takes a topic ID as its first
+ *        argument.
+ *     3. As the `topicId` prop passed to the mounted
+ *        `<DocumentPreview />` so the preview reads the same
+ *        per-topic slot.
+ *
+ *   A future reader who wonders "why the whole topic?" sees the
+ *   answer: consistency with the sibling components that render
+ *   inside the same tab, all of which take the same `Topic` prop.
+ *
+ * ── The hook signature (PR-1) ──────────────────────────────────
+ *
+ *   `useDocuments(topic._id)` — the hook now takes the topic ID
+ *   as its required first argument so this component reads the
+ *   store's per-topic slots for the topic it was given. See
+ *   `useDocuments.ts`'s file header for the full rationale on
+ *   the signature change; the short version is Q4.3's "refactor
+ *   all feature stores to key by topicId in the same pass."
  *
  * ── The four visual states ─────────────────────────────────────
  *
  *   The component renders one of four states, driven by the
- *   store's `status` field and by whether the `documents` array
+ *   topic's `status` slot and by whether the `documents` array
  *   is populated:
  *
  *     1. LOADING — `status === 'loading'` and no documents are
@@ -42,18 +61,20 @@
  *
  *   The `status` / `documents.length` combinations are read in
  *   that priority order — loading before error before empty
- *   before populated — because a store that is loading but has
- *   a stale list from a previous load should show the stale list
- *   rather than a spinner. The "loading" state only fires when
- *   the list is empty, which is the cold-start case.
+ *   before populated — because a topic whose store slot is
+ *   loading but whose list still holds a previous load's
+ *   documents should show the stale list rather than a spinner.
+ *   The "loading" state only fires when the list is empty, which
+ *   is the cold-start case.
  *
  * ── The DocumentPreview modal ──────────────────────────────────
  *
- *   The list mounts a `<DocumentPreview />` at the bottom of its
- *   own render tree. The preview component subscribes to the
- *   same store's `selectedDocument` field, renders itself as a
- *   modal when that field is non-null, and calls
- *   `selectDocument(null)` when the user dismisses it.
+ *   The list mounts a `<DocumentPreview topicId={topic._id} />`
+ *   at the bottom of its own render tree. The preview component
+ *   reads the same per-topic `selectedDocument` slot through
+ *   `useDocuments(topicId)`, renders itself as a modal when that
+ *   slot is non-null, and calls `selectDocument(topicId, null)`
+ *   when the user dismisses it.
  *
  *   This arrangement — the list owns the preview's mount, but
  *   the store owns the preview's open/closed state — is what
@@ -74,26 +95,11 @@
  *   it is the standard "destructive action" pattern for the app.
  *
  *   On confirmation, the component calls
- *   `deleteDocument(document._id)` and fires a success or error
- *   toast based on the boolean the action resolves with. The
- *   store's `documents` array is updated by the action itself,
+ *   `deleteDocument(topic._id, document._id)` and fires a success
+ *   or error toast based on the boolean the action resolves with.
+ *   The topic's `documents` slot is updated by the action itself,
  *   so the list re-renders without any additional work in this
  *   component.
- *
- * ── Forward reference to DocumentPreview ───────────────────────
- *
- *   This file imports `<DocumentPreview />` from
- *   `./DocumentPreview.js` — a file scheduled for Session 12,
- *   step 97 of the plan. Until that file exists on disk, the
- *   import produces one `TS2307` error on the import line. This
- *   is the same forward-reference pattern that every feature's
- *   page has used throughout the codebase — see `App.tsx`,
- *   `TopicDetail.tsx`, and the sibling `SourceList.tsx` for the
- *   established shape.
- *
- *   The component is mounted with no props. The preview reads
- *   everything it needs from the documents store via the
- *   `useDocuments` hook, so no prop threading is required.
  *
  * ── What this component does NOT do ────────────────────────────
  *
@@ -101,8 +107,9 @@
  *     requested. The `Document` object the store holds already
  *     carries the `content` field — the main process populated it
  *     from disk when the list was fetched. Clicking a preview
- *     button just sets `selectedDocument` on the store, and the
- *     preview modal renders the content that is already in memory.
+ *     button just writes to the topic's `selectedDocument` slot
+ *     on the store, and the preview modal renders the content
+ *     that is already in memory.
  *
  *   - It does not offer an "open in external editor" action.
  *     Adding one would use the preload's
@@ -412,7 +419,7 @@ export const DocumentList = ({ topic }: DocumentListProps) => {
     deleteDocument,
     selectDocument,
     clearError,
-  } = useDocuments();
+  } = useDocuments(topic._id);
 
   const toast = useToast();
   const modal = useModal();
@@ -449,9 +456,9 @@ export const DocumentList = ({ topic }: DocumentListProps) => {
   // file header for the reasoning.
   const handlePreview = useCallback(
     (document: Document): void => {
-      selectDocument(document);
+      selectDocument(topic._id, document);
     },
-    [selectDocument]
+    [selectDocument, topic._id]
   );
 
   // ---- Delete handler ----
@@ -460,7 +467,7 @@ export const DocumentList = ({ topic }: DocumentListProps) => {
   const performDelete = useCallback(
     (document: Document): void => {
       void (async (): Promise<void> => {
-        const ok = await deleteDocument(document._id);
+        const ok = await deleteDocument(topic._id, document._id);
         if (ok) {
           toast.success('Document deleted.');
         } else {
@@ -468,7 +475,7 @@ export const DocumentList = ({ topic }: DocumentListProps) => {
         }
       })();
     },
-    [deleteDocument, toast]
+    [deleteDocument, topic._id, toast]
   );
 
   const handleDelete = useCallback(
@@ -536,7 +543,7 @@ export const DocumentList = ({ topic }: DocumentListProps) => {
   // field reflects the outcome.
   const handleRetry = useCallback((): void => {
     void (async (): Promise<void> => {
-      clearError();
+      clearError(topic._id);
       setRetrying(true);
       try {
         await loadDocuments(topic._id);
@@ -691,13 +698,14 @@ export const DocumentList = ({ topic }: DocumentListProps) => {
       </div>
 
       {/* ---- Preview modal ---- */}
-      {/* Mounted unconditionally. The preview component reads the
-          store's `selectedDocument` field itself and renders
-          nothing when that field is null, so there is no cost to
-          keeping it in the tree — the same pattern the sibling
+      {/* Mounted unconditionally and handed the topic's ID so
+          the preview reads the same per-topic `selectedDocument`
+          slot this list manages. The preview renders nothing
+          when that slot is null, so there is no cost to keeping
+          it in the tree — the same pattern the sibling
           `SourceList.tsx` uses for its auto-select effect and
           the topic list page uses for its modal. */}
-      <DocumentPreview />
+      <DocumentPreview topicId={topic._id} />
     </div>
   );
 };

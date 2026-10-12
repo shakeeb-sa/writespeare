@@ -4,30 +4,32 @@
  *
  * Holds the state that drives the Article tab on the topic-detail
  * page while a DeepSeek generation is running and after it
- * finishes:
+ * finishes. Every piece of per-topic state is a record keyed by
+ * the topic's ID, so switching between topics never clobbers the
+ * previous topic's data:
  *
- *   activeTopicId     — which topic the state belongs to.
- *   isGenerating      — whether a writer operation is currently
- *                       in flight. Drives the Article tab's
- *                       progress panel and the disabled state
- *                       of the "Generate" button.
- *   progress          — the live progress of the running
- *                       generation (which doc is being pasted,
- *                       which phase is active), or null when
- *                       no generation is running.
- *   article           — the `Article` object the backend returned
- *                       for the last successful generation, or
- *                       null before the first generation. The
- *                       Article tab renders this object's
- *                       `content` field; a reader that wants to
- *                       see the last-generated article without
- *                       re-generating reads this field.
- *   status            — a coarse lifecycle flag mirroring the
- *                       shape every other store uses (`'idle'`,
- *                       `'loading'`, `'error'`). `isGenerating`
- *                       is derived from this and is exposed as a
- *                       convenience for the UI.
- *   error             — the last error message, or null.
+ *   activeTopicId        — the topic that most recently started a
+ *                          generation. A tracking field only; the
+ *                          marker handler no longer filters on it.
+ *   articlesByTopic      — per-topic article cache. The value is
+ *                          the `Article` object the backend
+ *                          returned for the last successful
+ *                          generation, or null when the topic has
+ *                          been loaded and confirmed to have no
+ *                          article. Absence of a key means "not
+ *                          yet loaded".
+ *   progressByTopic      — per-topic live progress of a running
+ *                          generation, or null when none is
+ *                          running.
+ *   isGeneratingByTopic  — per-topic in-flight flag. Drives the
+ *                          Article tab's progress panel and the
+ *                          disabled state of the "Generate"
+ *                          button.
+ *   statusByTopic        — per-topic lifecycle flag mirroring the
+ *                          shape every other store uses (`'idle'`,
+ *                          `'loading'`, `'error'`). Absence of a
+ *                          key is treated as `'idle'`.
+ *   errorByTopic         — per-topic last error message, or null.
  *
  * And the actions:
  *
@@ -57,10 +59,11 @@
  *   routes the marker types it cares about to its own state.
  *
  *   The writer store's handler reacts to `WRITER_PROGRESS` and
- *   `WRITER_DONE`. It ignores every other marker type. A marker
- *   whose `topicId` does not match the store's `activeTopicId` is
- *   dropped, so a concurrent operation on a different topic does
- *   not clobber this store's state.
+ *   `WRITER_DONE`. It ignores every other marker type. Each
+ *   marker is routed to its own topic's slot using the `topicId`
+ *   field on the payload — so a marker that arrives for a topic
+ *   other than the one the user is currently viewing updates the
+ *   correct slot in the background rather than being dropped.
  *
  * ── Why `isGenerating` is not flipped by the WRITER_DONE marker ─
  *
@@ -87,17 +90,24 @@
  *   Same reasoning as `researchStore.ts`. The article object is
  *   an in-memory mirror of a backend record; a fresh session
  *   repopulates it by generating again or by fetching from the
- *   backend. The `isGenerating`, `progress`, and `error` fields
- *   are ephemeral by definition.
+ *   backend. The per-topic `isGeneratingByTopic`,
+ *   `progressByTopic`, and `errorByTopic` records are ephemeral
+ *   by definition.
  *
- * ── The single-topic design ───────────────────────────────────
+ * ── The per-topic design ──────────────────────────────────────
  *
- *   The store holds one topic's generation state at a time,
- *   identified by `activeTopicId`. Same model as `researchStore`.
- *   A future session that wanted parallel generation across
- *   multiple topics would convert the flat state into a
- *   `Map<topicId, WriterState>` — a mechanical change confined
- *   to this file.
+ *   Every piece of per-topic state lives in a record keyed by
+ *   the topic's ID — `articlesByTopic`, `progressByTopic`,
+ *   `isGeneratingByTopic`, `statusByTopic`, and `errorByTopic`.
+ *   Switching between topics does not clobber any previous
+ *   topic's state; the store simply holds a slot for every topic
+ *   that has been loaded or generated for this session.
+ *
+ *   The marker handler routes each incoming marker to its own
+ *   topic's slot using the `topicId` on the payload, so markers
+ *   that arrive while the user is viewing a different topic are
+ *   still applied to the correct slot. When the user navigates
+ *   back, the state is already there.
  *
  * ── Why the type-only import from listenerBridge ──────────────
  *
@@ -217,36 +227,41 @@ export type WriterStoreStatus = 'idle' | 'loading' | 'error';
 export interface WriterStoreState {
   // ---- Data ----
 
-  /** The topic the state belongs to, or null before any
-   *  generation. Markers whose `topicId` does not match this
-   *  value are dropped by the marker handler. */
+  /** The topic that most recently started a generation, or null
+   *  before any generation. A tracking field only — the marker
+   *  handler routes each incoming marker to its own topic's slot
+   *  using the payload's `topicId` field, not this value. */
   activeTopicId: string | null;
 
-  /** Whether a writer operation is currently in flight. */
-  isGenerating: boolean;
+  /** Per-topic article cache. Keyed by the topic's ID. The value
+   *  is the `Article` object from the last successful generation,
+   *  or null when the topic has been loaded and confirmed to have
+   *  no article. Absence of a key means "not yet loaded". */
+  articlesByTopic: Record<string, Article | null>;
 
-  /** The live progress of the running operation, or null when
-   *  no operation is running. */
-  progress: WriterProgress | null;
+  /** Per-topic live progress of the running operation, or null
+   *  when no operation is running. */
+  progressByTopic: Record<string, WriterProgress | null>;
 
-  /** The `Article` object from the last successful generation,
-   *  or null before the first generation. */
-  article: Article | null;
+  /** Per-topic in-flight flag. Absence of a key is treated as
+   *  `false`. */
+  isGeneratingByTopic: Record<string, boolean>;
 
-  /** The store's async lifecycle state. See `WriterStoreStatus`. */
-  status: WriterStoreStatus;
+  /** Per-topic async lifecycle state. See `WriterStoreStatus`.
+   *  Absence of a key is treated as `'idle'`. */
+  statusByTopic: Record<string, WriterStoreStatus>;
 
-  /** The last error message, or null. */
-  error: string | null;
+  /** Per-topic last error message, or null. */
+  errorByTopic: Record<string, string | null>;
 
   // ---- Actions ----
 
   /**
    * Run a writer operation for a topic. Invokes
    * `window.electronAPI.writer.generate(topicId)` and updates
-   * state as the operation runs. Progress arrives through the
-   * marker channel; the final `Article` arrives as this action's
-   * return value.
+   * this topic's slots as the operation runs. Progress arrives
+   * through the marker channel; the final `Article` arrives as
+   * this action's return value.
    *
    * Returns the created `Article` on success, or null on
    * failure. The caller (`useWriter`) can use the truthiness of
@@ -258,26 +273,53 @@ export interface WriterStoreState {
    * Cancel the running generation for a topic. Invokes
    * `window.electronAPI.writer.cancel(topicId)`.
    *
-   * Resolves once the IPC call has returned. The store's
-   * `isGenerating` and `status` fields are NOT flipped by this
-   * action — the `generate` action's in-flight promise is what
-   * flips them when the cancellation causes the child to exit.
+   * Resolves once the IPC call has returned. The per-topic
+   * `isGeneratingByTopic` and `statusByTopic` entries are NOT
+   * flipped by this action — the `generate` action's in-flight
+   * promise is what flips them when the cancellation causes the
+   * child to exit.
    */
   cancel: (topicId: string) => Promise<void>;
 
   /**
-   * Set the current article directly. Used by a caller that
-   * fetched the article from the backend outside a generate
-   * call — for example, the useWriter hook's "load the last
-   * saved article on mount" flow.
+   * Load the latest article for a topic from the backend, and
+   * cache it in the topic's slot. Called by the hook on first
+   * open of a topic; subsequent calls for a topic that already
+   * has a slot are no-ops.
    */
-  setArticle: (article: Article | null) => void;
+  loadLatest: (topicId: string) => Promise<void>;
 
-  /** Clear the last error message. */
-  clearError: () => void;
+  /**
+   * Set a topic's article directly, without a network round trip.
+   * Used by a caller that has an article in hand — the
+   * ArticlePreview's inline edit save, or a caller that fetched
+   * the article through some other path. Pass null to clear.
+   */
+  setArticle: (topicId: string, article: Article | null) => void;
+
+  /** Clear the last error message for a topic. */
+  clearError: (topicId: string) => void;
 
   /** Reset every field to its initial value. */
   reset: () => void;
+
+  // ---- Per-topic getters ----
+
+  /** Return the cached article for a topic, or null when none is
+   *  loaded or the topic has no article. */
+  getArticle: (topicId: string) => Article | null;
+
+  /** Return the live progress for a topic, or null when none. */
+  getProgress: (topicId: string) => WriterProgress | null;
+
+  /** Return whether a generation is in flight for a topic. */
+  getIsGenerating: (topicId: string) => boolean;
+
+  /** Return the async lifecycle state for a topic. */
+  getStatus: (topicId: string) => WriterStoreStatus;
+
+  /** Return the last error message for a topic, or null. */
+  getError: (topicId: string) => string | null;
 
   /**
    * Internal — route one marker event to the correct state
@@ -298,11 +340,11 @@ export interface WriterStoreState {
  */
 const INITIAL_STATE = {
   activeTopicId: null as string | null,
-  isGenerating: false,
-  progress: null as WriterProgress | null,
-  article: null as Article | null,
-  status: 'idle' as WriterStoreStatus,
-  error: null as string | null,
+  articlesByTopic: {} as Record<string, Article | null>,
+  progressByTopic: {} as Record<string, WriterProgress | null>,
+  isGeneratingByTopic: {} as Record<string, boolean>,
+  statusByTopic: {} as Record<string, WriterStoreStatus>,
+  errorByTopic: {} as Record<string, string | null>,
 };
 
 // =============================================================================
@@ -403,16 +445,27 @@ export const useWriterStore = create<WriterStoreState>((set, get) => ({
   // marker is ignored — CAPTCHA_REQUIRED, MANUAL_ACTION,
   // SEARCH_*, EXTRACT_*, and the task-boundary markers all
   // belong to other stores.
+  //
+  // Each marker is routed to its own topic's slot using the
+  // `topicId` on the payload. The handler does NOT filter on
+  // `activeTopicId` — a marker that arrives for a topic the
+  // user is not currently viewing must still update that
+  // topic's slot, so that navigating back to it shows the
+  // correct state.
   _handleMarker: (event: MarkerEvent): void => {
     const topicId = readTopicId(event.payload);
     if (topicId === null) return;
-    if (topicId !== get().activeTopicId) return;
 
     switch (event.type) {
       case 'WRITER_PROGRESS': {
         const progress = narrowWriterProgress(event.payload);
         if (progress !== null) {
-          set({ progress });
+          set((state) => ({
+            progressByTopic: {
+              ...state.progressByTopic,
+              [topicId]: progress,
+            },
+          }));
         }
         return;
       }
@@ -420,11 +473,16 @@ export const useWriterStore = create<WriterStoreState>((set, get) => ({
       case 'WRITER_DONE': {
         // The child has exited. Clear the progress panel — the
         // panel is no longer relevant — but leave
-        // `isGenerating` and `status` for the `generate`
-        // action's in-flight promise to flip. See the file
-        // header's "Why isGenerating is not flipped by the
-        // WRITER_DONE marker" section.
-        set({ progress: null });
+        // `isGeneratingByTopic` and `statusByTopic` for the
+        // `generate` action's in-flight promise to flip. See
+        // the file header's "Why isGenerating is not flipped
+        // by the WRITER_DONE marker" section.
+        set((state) => ({
+          progressByTopic: {
+            ...state.progressByTopic,
+            [topicId]: null,
+          },
+        }));
         return;
       }
 
@@ -439,39 +497,75 @@ export const useWriterStore = create<WriterStoreState>((set, get) => ({
 
   // ---- generate ----
   generate: async (topicId: string): Promise<Article | null> => {
-    // Set the active topic and flip the in-flight flags. The
-    // `article` field is NOT cleared here — a re-generate
-    // keeps the previous article visible until the new one
-    // lands, so the user is never staring at an empty tab
-    // while the operation runs.
-    set({
+    // Flip the in-flight flags for this topic. The
+    // `articlesByTopic[topicId]` slot is NOT cleared here — a
+    // re-generate keeps the previous article visible until the
+    // new one lands, so the user is never staring at an empty
+    // tab while the operation runs.
+    set((state) => ({
       activeTopicId: topicId,
-      isGenerating: true,
-      progress: null,
-      status: 'loading',
-      error: null,
-    });
+      isGeneratingByTopic: {
+        ...state.isGeneratingByTopic,
+        [topicId]: true,
+      },
+      progressByTopic: {
+        ...state.progressByTopic,
+        [topicId]: null,
+      },
+      statusByTopic: {
+        ...state.statusByTopic,
+        [topicId]: 'loading',
+      },
+      errorByTopic: {
+        ...state.errorByTopic,
+        [topicId]: null,
+      },
+    }));
 
     try {
       const result = await window.electronAPI.writer.generate(topicId);
 
       if (result.success && result.data) {
         const article = result.data;
-        set({
-          article,
-          isGenerating: false,
-          progress: null,
-          status: 'idle',
-        });
+        set((state) => ({
+          articlesByTopic: {
+            ...state.articlesByTopic,
+            [topicId]: article,
+          },
+          isGeneratingByTopic: {
+            ...state.isGeneratingByTopic,
+            [topicId]: false,
+          },
+          progressByTopic: {
+            ...state.progressByTopic,
+            [topicId]: null,
+          },
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'idle',
+          },
+        }));
         return article;
       }
 
-      set({
-        isGenerating: false,
-        progress: null,
-        status: 'error',
-        error: result.error ?? 'Article generation failed.',
-      });
+      set((state) => ({
+        isGeneratingByTopic: {
+          ...state.isGeneratingByTopic,
+          [topicId]: false,
+        },
+        progressByTopic: {
+          ...state.progressByTopic,
+          [topicId]: null,
+        },
+        statusByTopic: {
+          ...state.statusByTopic,
+          [topicId]: 'error',
+        },
+        errorByTopic: {
+          ...state.errorByTopic,
+          [topicId]: result.error ?? 'Article generation failed.',
+        },
+      }));
       return null;
     } catch (err) {
       // An IPC rejection is unusual — the preload resolves
@@ -479,15 +573,27 @@ export const useWriterStore = create<WriterStoreState>((set, get) => ({
       // the channel is unregistered or the renderer's context
       // has been torn down.
       console.error('[writerStore] generate failed:', err);
-      set({
-        isGenerating: false,
-        progress: null,
-        status: 'error',
-        error:
-          err instanceof Error
-            ? err.message
-            : 'Unable to reach the writer service.',
-      });
+      set((state) => ({
+        isGeneratingByTopic: {
+          ...state.isGeneratingByTopic,
+          [topicId]: false,
+        },
+        progressByTopic: {
+          ...state.progressByTopic,
+          [topicId]: null,
+        },
+        statusByTopic: {
+          ...state.statusByTopic,
+          [topicId]: 'error',
+        },
+        errorByTopic: {
+          ...state.errorByTopic,
+          [topicId]:
+            err instanceof Error
+              ? err.message
+              : 'Unable to reach the writer service.',
+        },
+      }));
       return null;
     }
   },
@@ -504,28 +610,128 @@ export const useWriterStore = create<WriterStoreState>((set, get) => ({
       // to the user.
       console.error('[writerStore] cancel failed:', err);
     }
-    // `isGenerating` and `status` are flipped by the
-    // `generate` action's in-flight promise when it resolves.
-    // This action does not optimistically set them, because
-    // doing so would race the terminal marker that arrives a
-    // moment later.
+    // `isGeneratingByTopic[topicId]` and `statusByTopic[topicId]`
+    // are flipped by the `generate` action's in-flight promise
+    // when it resolves. This action does not optimistically set
+    // them, because doing so would race the terminal marker
+    // that arrives a moment later.
   },
 
+    // ---- loadLatest ----
+  loadLatest: async (topicId: string): Promise<void> => {
+    // "Fetch on first open" semantics: if the topic already has
+    // a loaded slot (even a `null` one), do not refetch. The
+    // check is `!== undefined` rather than a truthy check
+    // because `null` is a legitimate cached value meaning
+    // "loaded, no article yet".
+    if (get().articlesByTopic[topicId] !== undefined) {
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.writer.getLatest(topicId);
+
+      if (result.success) {
+        // Success with `data` non-null means an article exists.
+        // Success with `data` null or undefined means the
+        // backend responded but has no article for this topic —
+        // which is a legitimate state that must be cached so
+        // subsequent calls skip the fetch. Both cases write a
+        // defined value.
+        set((state) => ({
+          articlesByTopic: {
+            ...state.articlesByTopic,
+            [topicId]: result.data ?? null,
+          },
+        }));
+      } else {
+        // The backend refused the request (a 404 for an unknown
+        // topic, a 401 for an expired session, a 500 for a
+        // server-side failure). We do NOT write a slot — the
+        // caller's mount effect will retry on next mount, and a
+        // cached null would falsely imply "we checked and there
+        // is no article".
+        //
+        // The error is logged for the developer; the UI does
+        // not surface it, because a missing article is the
+        // normal state for a topic that has not been generated
+        // yet.
+        console.error(
+          '[writerStore] loadLatest failed:',
+          result.error ?? 'Unknown error'
+        );
+      }
+    } catch (err) {
+      // An IPC rejection — the channel is unregistered, or the
+      // renderer's context has been torn down. Same policy as
+      // the `!result.success` branch: no slot is written.
+      console.error('[writerStore] loadLatest IPC failed:', err);
+    }
+  },
+
+
   // ---- setArticle ----
-  setArticle: (article: Article | null): void => {
-    set({ article });
+  setArticle: (topicId: string, article: Article | null): void => {
+    set((state) => ({
+      articlesByTopic: {
+        ...state.articlesByTopic,
+        [topicId]: article,
+      },
+    }));
   },
 
   // ---- Clear helpers ----
-  clearError: (): void => {
-    set({ error: null });
-    if (get().status === 'error') {
-      set({ status: 'idle' });
+  clearError: (topicId: string): void => {
+    set((state) => ({
+      errorByTopic: {
+        ...state.errorByTopic,
+        [topicId]: null,
+      },
+    }));
+    if (get().statusByTopic[topicId] === 'error') {
+      set((state) => ({
+        statusByTopic: {
+          ...state.statusByTopic,
+          [topicId]: 'idle',
+        },
+      }));
     }
   },
 
   reset: (): void => {
     set({ ...INITIAL_STATE });
+  },
+
+  
+  // ---- Per-topic getters ----
+  // Each getter reads the current value for a topic from the
+  // corresponding per-topic record. The `?? default` fallback
+  // covers the case of a topic that has not yet had any
+  // operation — a status of 'idle', no article, no error.
+  //
+  // The getters exist so that a caller which needs a specific
+  // topic's value can read it without having to know the exact
+  // record field name. They are convenience wrappers over the
+  // records, not a second source of truth.
+
+  getArticle: (topicId: string): Article | null => {
+    return get().articlesByTopic[topicId] ?? null;
+  },
+
+  getProgress: (topicId: string): WriterProgress | null => {
+    return get().progressByTopic[topicId] ?? null;
+  },
+
+  getIsGenerating: (topicId: string): boolean => {
+    return get().isGeneratingByTopic[topicId] ?? false;
+  },
+
+  getStatus: (topicId: string): WriterStoreStatus => {
+    return get().statusByTopic[topicId] ?? 'idle';
+  },
+
+  getError: (topicId: string): string | null => {
+    return get().errorByTopic[topicId] ?? null;
   },
 }));
 

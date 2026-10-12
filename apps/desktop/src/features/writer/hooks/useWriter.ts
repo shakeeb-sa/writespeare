@@ -18,18 +18,31 @@
  *     data fields and the actions — under the names the plan's
  *     Part 1.11 table declares.
  *
+ * ── The hook's signature ───────────────────────────────────────
+ *
+ *   `useWriter(topicId)` — the topic ID argument is required. The
+ *   hook reads the topic's per-topic slots from the store via
+ *   selectors keyed on that ID, so two components rendering
+ *   different topics see independent state, and the same
+ *   component re-renders only when its own topic's state changes.
+ *
  * ── The hook's API ──────────────────────────────────────────────
  *
- *   Data fields:
+ *   Data fields (all read from the topic passed to `useWriter`):
  *
- *     activeTopicId   The topic the current state belongs to.
- *     isGenerating    Whether a writer operation is in flight.
- *     progress        The live progress of the running operation,
- *                     or null when none is running.
- *     article         The last successfully-generated Article, or
- *                     null before the first generation.
- *     status          The store's async lifecycle state.
- *     error           The last error message, or null.
+ *     activeTopicId   The topic that most recently began a
+ *                     generation. A tracking field only; the
+ *                     marker handler routes each marker by its
+ *                     payload's `topicId`, not by this value.
+ *     isGenerating    Whether a writer operation is in flight for
+ *                     the topic.
+ *     progress        The live progress of the running operation
+ *                     for the topic, or null when none is
+ *                     running.
+ *     article         The last successfully-generated Article for
+ *                     the topic, or null when none exists yet.
+ *     status          The topic's async lifecycle state.
+ *     error           The topic's last error message, or null.
  *
  *   Actions:
  *
@@ -44,10 +57,19 @@
  *
  *     cancel(topicId)       Cancel the running generation.
  *
- *     setArticle(article)   Set the current article directly,
- *                           without a network round trip.
+ *     loadLatest(topicId)   Fetch the topic's latest article from
+ *                           the backend, and cache it in the
+ *                           topic's slot. Called by the topic-
+ *                           detail page on first open of each
+ *                           topic; subsequent calls for a topic
+ *                           that already has a slot are no-ops.
  *
- *     clearError()          Clear the last error.
+ *     setArticle(topicId, article)
+ *                           Set the topic's article directly,
+ *                           without a network round trip. Pass
+ *                           null to clear.
+ *
+ *     clearError(topicId)   Clear the topic's last error.
  *
  *     reset()               Reset the store to its initial state.
  *
@@ -100,15 +122,21 @@
  *   references from the store, and there is no second name for
  *   any of them.
  *
- * ── Why the hook subscribes to each data field separately ───────
+ * ── Why the hook subscribes per-field, per-topic ───────────────
  *
- *   Same reasoning as `useTopics`, `useResearch`, and
- *   `useDocuments`. Zustand re-renders a component when any of
- *   the selectors it subscribed to returns a different value;
- *   subscribing per-field gives the finest-grained re-render
- *   behavior. The alternative — one selector returning the whole
- *   state — would re-render on every store change and need a
- *   shallow-equality comparator to avoid wasted renders.
+ *   Each data field is read through a selector that indexes into
+ *   the per-topic record using the topic ID the hook received.
+ *   Zustand re-renders a component when any of its selectors
+ *   returns a different value, so a component reading topic A
+ *   re-renders when A's state changes and does NOT re-render when
+ *   topic B's state changes.
+ *
+ *   The alternative — subscribing to the entire per-topic record
+ *   and reading the topic's slot inline — would re-render on
+ *   every write to any topic, forcing every component to also
+ *   pay the cost of a shallow-equality comparator. The per-field
+ *   per-topic form gives the finest-grained re-render behavior
+ *   Zustand supports.
  *
  * ── What this hook does NOT do ──────────────────────────────────
  *
@@ -155,26 +183,28 @@ import type { Article } from '../../shared/types/index.js';
 export interface WriterHookValue {
   // ---- Data ----
 
-  /** The topic the current state belongs to, or null before the
-   *  first generation. */
+  /** The topic that most recently began a generation, or null
+   *  before any generation. A tracking field only. */
   activeTopicId: string | null;
 
-  /** Whether a writer operation is currently in flight. */
+  /** Whether a writer operation is currently in flight for the
+   *  topic passed to `useWriter`. */
   isGenerating: boolean;
 
-  /** The live progress of the running operation, or null when
-   *  none is running. */
+  /** The live progress of the running operation for the topic,
+   *  or null when none is running. */
   progress: WriterProgress | null;
 
-  /** The last successfully-generated article, or null before the
-   *  first generation. */
+  /** The last successfully-generated article for the topic, or
+   *  null when none exists yet. */
   article: Article | null;
 
-  /** The store's async lifecycle state. See `WriterStoreStatus`
+  /** The topic's async lifecycle state. See `WriterStoreStatus`
    *  in `writerStore.ts` for the meaning of each value. */
   status: WriterStoreStatus;
 
-  /** The last error message from an async action, or null. */
+  /** The topic's last error message from an async action, or
+   *  null. */
   error: string | null;
 
   // ---- Actions ----
@@ -192,12 +222,18 @@ export interface WriterHookValue {
    *  the IPC call has returned. */
   cancel: (topicId: string) => Promise<void>;
 
-  /** Set the current article directly, without a network round
-   *  trip. Pass null to clear. */
-  setArticle: (article: Article | null) => void;
+  /** Load the topic's latest article from the backend. Resolves
+   *  once the operation completes. The topic's `article` slot is
+   *  populated (or set to null when the backend confirms no
+   *  article exists). */
+  loadLatest: (topicId: string) => Promise<void>;
 
-  /** Clear the last error message. */
-  clearError: () => void;
+  /** Set a topic's article directly, without a network round
+   *  trip. Pass null to clear. */
+  setArticle: (topicId: string, article: Article | null) => void;
+
+  /** Clear a topic's last error message. */
+  clearError: (topicId: string) => void;
 
   /** Reset the store to its initial state. */
   reset: () => void;
@@ -212,22 +248,39 @@ export interface WriterHookValue {
  * file header for the hook's role, its relationship to the store,
  * and the reasoning behind the design choices.
  */
-export const useWriter = (): WriterHookValue => {
+export const useWriter = (topicId: string): WriterHookValue => {
   // ---- Data subscriptions ----
-  // One selector per data field. See the file header for why
-  // the fields are read individually rather than as one object.
+  // One selector per data field, each keyed by the topic ID the
+  // hook received. See the file header for why the fields are
+  // read individually and per-topic rather than as one object.
+  //
+  // The `?? default` fallback covers a topic that has no entry
+  // in the record yet — the state a fresh session has for a
+  // topic the user has not interacted with. The literal
+  // defaults are the same values the store's getters return.
   const activeTopicId = useWriterStore((s) => s.activeTopicId);
-  const isGenerating = useWriterStore((s) => s.isGenerating);
-  const progress = useWriterStore((s) => s.progress);
-  const article = useWriterStore((s) => s.article);
-  const status = useWriterStore((s) => s.status);
-  const error = useWriterStore((s) => s.error);
+  const isGenerating = useWriterStore(
+    (s) => s.isGeneratingByTopic[topicId] ?? false
+  );
+  const progress = useWriterStore(
+    (s) => s.progressByTopic[topicId] ?? null
+  );
+  const article = useWriterStore(
+    (s) => s.articlesByTopic[topicId] ?? null
+  );
+  const status = useWriterStore(
+    (s) => s.statusByTopic[topicId] ?? 'idle'
+  );
+  const error = useWriterStore(
+    (s) => s.errorByTopic[topicId] ?? null
+  );
 
   // ---- Action subscriptions ----
   // Zustand actions are stable references for the life of the
   // store, so selecting them here does not cause re-renders.
   const storeGenerate = useWriterStore((s) => s.generate);
   const cancel = useWriterStore((s) => s.cancel);
+  const loadLatest = useWriterStore((s) => s.loadLatest);
   const setArticle = useWriterStore((s) => s.setArticle);
   const clearError = useWriterStore((s) => s.clearError);
   const reset = useWriterStore((s) => s.reset);
@@ -239,21 +292,21 @@ export const useWriter = (): WriterHookValue => {
   // file header's "Why two names for one action" section for
   // the full reasoning.
   const generate = useCallback(
-    async (topicId: string): Promise<Article | null> => {
-      return storeGenerate(topicId);
+    async (id: string): Promise<Article | null> => {
+      return storeGenerate(id);
     },
     [storeGenerate]
   );
 
   const regenerate = useCallback(
-    async (topicId: string): Promise<Article | null> => {
-      return storeGenerate(topicId);
+    async (id: string): Promise<Article | null> => {
+      return storeGenerate(id);
     },
     [storeGenerate]
   );
 
   // ---- Return ----
-  // A single object literal with all twelve members. The order
+  // A single object literal with all thirteen members. The order
   // matches the interface above, so a reader comparing the two
   // does not have to hunt for a member's position.
   return {
@@ -266,6 +319,7 @@ export const useWriter = (): WriterHookValue => {
     generate,
     regenerate,
     cancel,
+    loadLatest,
     setArticle,
     clearError,
     reset,

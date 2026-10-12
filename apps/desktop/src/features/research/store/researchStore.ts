@@ -4,23 +4,37 @@
  * Holds the state that drives the Sources and Documents tabs on
  * the topic-detail page:
  *
- *   candidates       — the search result list the user is reviewing
- *   searchProgress   — live progress during a search
- *   extractProgress  — live progress during extraction
- *   extractedCount   — how many doc files the last extraction saved
- *   error            — the last error from either operation
- *   activeTopicId    — which topic the state belongs to
+ *   candidatesByTopic      — per-topic bucket-keyed candidate lists.
+ *                            Each topic's slot is a full
+ *                            `CandidatesByBucket` record, one array
+ *                            per time-range bucket.
+ *   searchProgressByTopic  — per-topic per-bucket live search
+ *                            progress; a bucket's slot is null when
+ *                            not currently in flight.
+ *   extractProgressByTopic — per-topic live extraction progress.
+ *   extractedCountByTopic  — per-topic count of docs saved by the
+ *                            last extraction.
+ *   failedByTopic          — per-topic list of URLs whose extraction
+ *                            failed, loaded from `failures.json`.
+ *   statusByTopic          — per-topic lifecycle state.
+ *   errorByTopic           — per-topic last error message, or null.
+ *   activeTopicId          — the topic that most recently started a
+ *                            search; tracking field only.
  *
  * And the actions the components call to drive those operations:
  *
- *   startSearch       — invoke the search IPC and update state
- *                       as the operation runs
+ *   runFullSearch     — invoke the search IPC once per configured
+ *                       bucket, sequentially; update per-bucket
+ *                       progress as each bucket runs
  *   runExtraction     — invoke the extract IPC with the selected
  *                       URLs
+ *   retryFailed       — re-run extraction for the URLs whose last
+ *                       attempt failed
  *   cancelOperation   — cancel whatever is running for a topic
- *   clearCandidates   — empty the candidate list (after the user
- *                       moves on to extraction)
- *   clearError        — dismiss the last error
+ *   loadCandidates    — read the topic's saved candidates and
+ *                       failures from disk on first open
+ *   clearCandidates   — empty one topic's candidate buckets
+ *   clearError        — dismiss the last error for one topic
  *   reset             — return every field to its initial value
  *
  * ── How the store receives updates ────────────────────────────
@@ -65,27 +79,34 @@
  *   visiting for the first time in days. The store therefore uses
  *   plain `create()` with no `persist` middleware.
  *
- * ── The single-topic design ───────────────────────────────────
+ *   The `candidatesByTopic` and `failedByTopic` records are
+ *   repopulated on first open of each topic by the
+ *   `loadCandidates` action, which reads the topic's on-disk
+ *   `candidates.json` and `failures.json` via the main process.
  *
- *   The store holds ONE topic's research state at a time,
- *   identified by `activeTopicId`. The plan's user journey shows
- *   the user working on one topic's pipeline in the detail view;
- *   a second topic's search would replace the first's state in
- *   this store. The `activeTopicId` field is what lets the marker
- *   handler FILTER out markers that belong to a different topic —
- *   a search for topic B that starts while topic A's state is
- *   still in the store does not clobber A's candidate list,
- *   because the handler drops B's markers (their payload's
- *   `topicId` does not match `activeTopicId`).
+ * ── The per-topic, per-bucket design ──────────────────────────
  *
- *   The design assumption is: the user looks at one topic at a
- *   time. If a future session needs to run four topics' searches
- *   in parallel and show all four progress bars simultaneously,
- *   the store would change from flat state to a
- *   `Map<topicId, ResearchState>` and the marker handler would
- *   use the payload's `topicId` as a map key rather than as a
- *   filter. That refactor is a mechanical change confined to this
- *   file; the services and IPC handlers above it are unaffected.
+ *   Every piece of research state is a record keyed by the
+ *   topic's ID, so switching between topics never clobbers the
+ *   previous topic's data. The marker handler routes each
+ *   incoming marker to its own topic's slot using the `topicId`
+ *   on the payload — a marker that arrives while the user is
+ *   viewing a different topic still updates the correct slot.
+ *
+ *   Within a topic, the candidate list is keyed by time-range
+ *   bucket (`'anytime' | 'year' | 'month' | 'week'`) rather than
+ *   being a single flat array. The four buckets correspond to the
+ *   four time ranges the search pipeline queries, and each bucket
+ *   carries its own candidate list and its own progress slot. A
+ *   bucket that was configured with a zero count is skipped
+ *   entirely — it never produces candidates and never shows
+ *   progress.
+ *
+ *   Extraction is not bucketed: it processes a flat list of URLs
+ *   the user selected, and its progress is a single per-topic
+ *   value. A separate `failedByTopic` record tracks URLs whose
+ *   extraction failed so that the retry flow can re-run just
+ *   those.
  *
  * ── Why the type-only import from listenerBridge ──────────────
  *
@@ -197,6 +218,73 @@ export interface SearchCandidate {
   platform: string;
 }
 
+
+
+/**
+ * The four time-range buckets the search pipeline queries.
+ *
+ * The values match the strings the Python search scripts accept
+ * on their `--time-range` argument (see `research/google_search.py`
+ * and the pipeline's main.py dispatcher). They are the store's
+ * canonical bucket identifiers.
+ */
+export type BucketKey = 'anytime' | 'year' | 'month' | 'week';
+
+/**
+ * A topic's candidate list, split by time-range bucket.
+ *
+ * Every bucket key is required and every value is an array — an
+ * empty array is the correct representation for "searched but
+ * found nothing" or "not yet searched". The store never uses a
+ * missing key to mean "not searched" — that distinction is
+ * carried by the presence or absence of the topic itself in
+ * `candidatesByTopic`.
+ */
+export type CandidatesByBucket = Record<BucketKey, SearchCandidate[]>;
+
+/**
+ * The bucket-count configuration the New Topic modal supplies to
+ * a search.
+ *
+ * The keys mirror the `searchBuckets` field on the `Topic` schema
+ * and the `defaultBucketLayout` field on the `Preset` schema (see
+ * the shared types modules on both the server and the desktop).
+ * The value is the number of candidates to collect for that time
+ * range; a zero means "skip this bucket entirely".
+ */
+export interface BucketConfig {
+  anyTime: number;
+  pastYear: number;
+  pastMonth: number;
+  pastWeek: number;
+}
+
+/**
+ * One failed-extraction record, as loaded from the topic's
+ * `failures.json` file.
+ *
+ * The record is written by the Python extraction dispatcher and
+ * mirrors the payload the failure-tracking feature agreed on (see
+ * the consolidated decisions document, Q2.4 and C6). The store
+ * loads these records on topic open and uses them to drive the
+ * retry flow.
+ */
+export interface FailedUrlRecord {
+  /** The URL that failed to extract. */
+  url: string;
+  /** A short classification of the failure — e.g. `'timeout'`,
+   *  `'site_returned_404'`, `'empty_content'`. */
+  reason: string;
+  /** How many times this URL has been attempted across runs. */
+  attemptCount: number;
+  /** ISO-8601 timestamp of the most recent attempt. */
+  lastAttemptAt: string;
+  /** The full error message from the most recent attempt, if the
+   *  dispatcher captured one. Empty string when none was. */
+  errorMessage: string;
+}
+
+
 /**
  * The lifecycle state of the research feature's current
  * operation. Mirrors the pattern used by every other store in the
@@ -260,92 +348,138 @@ export interface ExtractProgress {
 export interface ResearchStoreState {
   // ---- Data ----
 
-  /** The candidate list from the current topic's last search. */
-  candidates: SearchCandidate[];
-
-  /** The topic the state belongs to, or null when no topic is
-   *  active. Every marker whose payload's `topicId` does not
-   *  match this value is dropped by the marker handler. */
+  /** The topic that most recently started a search, or null
+   *  before any search. A tracking field only — the marker
+   *  handler routes each marker to its own topic's slot using
+   *  the payload's `topicId` field, not this value. */
   activeTopicId: string | null;
 
-  /** The current operation's lifecycle state. See
-   *  `ResearchStoreStatus`. */
-  status: ResearchStoreStatus;
+  /** Per-topic candidate lists, split by time-range bucket.
+   *  Absence of a topic's key means "not yet loaded"; the value
+   *  itself always carries all four bucket keys. */
+  candidatesByTopic: Record<string, CandidatesByBucket>;
 
-  /** Live progress during a search, or null when no search is
-   *  in flight (and the last one, if any, is not being reported). */
-  searchProgress: SearchProgress | null;
+  /** Per-topic per-bucket live search progress. Each topic's
+   *  value is a full four-key record; a bucket's slot is null
+   *  when that bucket is not currently searching. */
+  searchProgressByTopic: Record<
+    string,
+    Record<BucketKey, SearchProgress | null>
+  >;
 
-  /** Live progress during extraction, or null when no extraction
-   *  is in flight. */
-  extractProgress: ExtractProgress | null;
+  /** Per-topic live extraction progress. Null when the topic
+   *  has no extraction in flight. */
+  extractProgressByTopic: Record<string, ExtractProgress | null>;
 
-  /** How many doc files the last extraction saved. Reset to 0 at
-   *  the start of a new extraction. */
-  extractedCount: number;
+  /** Per-topic count of documents saved by the last extraction. */
+  extractedCountByTopic: Record<string, number>;
 
-  /** The last error message, or null. Cleared at the start of
-   *  every new operation and by `clearError`. */
-  error: string | null;
+  /** Per-topic list of URLs whose extraction failed. Populated
+   *  from `failures.json` on first open of the topic. */
+  failedByTopic: Record<string, FailedUrlRecord[]>;
+
+  /** Per-topic async lifecycle state. Absence of a key is
+   *  treated as `'idle'`. */
+  statusByTopic: Record<string, ResearchStoreStatus>;
+
+  /** Per-topic last error message, or null. */
+  errorByTopic: Record<string, string | null>;
 
   // ---- Actions ----
 
   /**
-   * Run a search for a topic. Invokes `window.electronAPI.research.search`
-   * and updates the state as the operation progresses.
+   * Run a full bucketed search for a topic. Invokes
+   * `window.electronAPI.research.search(topicId, title, keywords,
+   * bucketKey)` once per configured bucket, sequentially, and
+   * updates per-bucket progress as each call resolves. Buckets
+   * whose configured count is zero are skipped entirely.
    *
-   * On success, the candidate list is populated both by this
-   * action's return path AND by the `SEARCH_RESULT` marker that
-   * arrives over the marker channel. The two are the same data;
-   * whichever lands first wins, and the second is a no-op
-   * (assigning an equivalent array is harmless).
+   * The candidate data itself arrives over the marker channel —
+   * each SEARCH_RESULT marker carries a `timeRange` field that
+   * the store routes to the corresponding bucket. The action's
+   * return value reflects only whether every configured bucket's
+   * IPC call returned a success envelope.
    *
-   * Returns `true` on success, `false` on failure. The caller
-   * (typically `useResearch`) can use the boolean to decide
-   * whether to surface a toast.
+   * Returns `true` when every configured bucket's search call
+   * succeeded, `false` on any failure.
    */
-  startSearch: (
+  runFullSearch: (
     topicId: string,
     title: string,
-    keywords?: string[]
+    keywords: string[],
+    bucketConfig: BucketConfig
   ) => Promise<boolean>;
 
   /**
    * Run an extraction on the given URLs. Invokes
-   * `window.electronAPI.research.extract` and updates state as
-   * the operation progresses.
+   * `window.electronAPI.research.extract` and updates this
+   * topic's extraction state as the operation progresses.
    *
-   * Returns the number of documents saved, or 0 on failure. The
-   * caller can use the number to decide whether to navigate to the
-   * Documents tab.
+   * Returns the number of documents saved, or 0 on failure.
    */
-  runExtraction: (
-    topicId: string,
-    urls: string[]
-  ) => Promise<number>;
+  runExtraction: (topicId: string, urls: string[]) => Promise<number>;
+
+  /**
+   * Re-run extraction for the URLs whose last attempt failed.
+   * Reads the topic's failed-URL list, invokes the same
+   * extraction flow with only those URLs, and refreshes the
+   * failed list from disk afterwards (some URLs may have
+   * succeeded on the retry).
+   *
+   * Returns the number of documents saved by the retry.
+   */
+  retryFailed: (topicId: string) => Promise<number>;
 
   /**
    * Cancel whatever research operation is running for a topic.
    * Invokes `window.electronAPI.research.cancel`, which hard-kills
-   * the Python subprocess (see `researchIPC.ts` for the
-   * graceful-vs-hard distinction).
-   *
-   * Resolves once the IPC call has returned. Does not wait for
-   * the process to have fully exited — the main process's
-   * `killed` handler will emit a terminal event that the store
-   * uses to flip `status` back to idle.
+   * the Python subprocess.
    */
   cancelOperation: (topicId: string) => Promise<void>;
 
-  /** Empty the candidate list. Called after the user has moved on
-   *  to extraction. */
-  clearCandidates: () => void;
+  /**
+   * Load a topic's saved candidates and failed-URL records from
+   * the main process on first open. Subsequent calls for a topic
+   * that already has a `candidatesByTopic` slot are no-ops.
+   */
+  loadCandidates: (topicId: string) => Promise<void>;
 
-  /** Clear the last error message. */
-  clearError: () => void;
+  /** Empty the candidate buckets for one topic. */
+  clearCandidates: (topicId: string) => void;
+
+  /** Clear the last error message for one topic. */
+  clearError: (topicId: string) => void;
 
   /** Reset every field to its initial value. */
   reset: () => void;
+
+  // ---- Per-topic getters ----
+
+  /** All candidates for a topic, flattened across buckets. */
+  getCandidates: (topicId: string) => SearchCandidate[];
+
+  /** The full bucket-keyed candidate record for a topic. */
+  getCandidatesByBucket: (topicId: string) => CandidatesByBucket;
+
+  /** The per-bucket progress record for a topic. */
+  getSearchProgress: (
+    topicId: string
+  ) => Record<BucketKey, SearchProgress | null>;
+
+  /** The extraction progress for a topic, or null when none. */
+  getExtractProgress: (topicId: string) => ExtractProgress | null;
+
+  /** How many documents the last extraction saved for a topic. */
+  getExtractedCount: (topicId: string) => number;
+
+  /** The list of failed URLs for a topic. */
+  getFailed: (topicId: string) => FailedUrlRecord[];
+
+  /** The async lifecycle state for a topic. */
+  getStatus: (topicId: string) => ResearchStoreStatus;
+
+  /** The last error message for a topic, or null. */
+  getError: (topicId: string) => string | null;
 
   /**
    * Internal — route one marker event to the correct state
@@ -371,14 +505,88 @@ export interface ResearchStoreState {
  * actually starts.
  */
 const INITIAL_STATE = {
-  candidates: [] as SearchCandidate[],
   activeTopicId: null as string | null,
-  status: 'idle' as ResearchStoreStatus,
-  searchProgress: null as SearchProgress | null,
-  extractProgress: null as ExtractProgress | null,
-  extractedCount: 0,
-  error: null as string | null,
+  candidatesByTopic: {} as Record<string, CandidatesByBucket>,
+  searchProgressByTopic: {} as Record<
+    string,
+    Record<BucketKey, SearchProgress | null>
+  >,
+  extractProgressByTopic: {} as Record<string, ExtractProgress | null>,
+  extractedCountByTopic: {} as Record<string, number>,
+  failedByTopic: {} as Record<string, FailedUrlRecord[]>,
+  statusByTopic: {} as Record<string, ResearchStoreStatus>,
+  errorByTopic: {} as Record<string, string | null>,
 };
+
+
+// =============================================================================
+//  Bucket helpers
+// =============================================================================
+//
+//  Small factories and predicates shared by the initialisation
+//  paths and the marker handler. Both empty-shape factories
+//  return fresh objects on every call so that two topics' slots
+//  never share a reference — a future mutation of one topic's
+//  record cannot silently affect another's.
+
+/**
+ * The set of bucket keys as a runtime array. Its type is
+ * `readonly BucketKey[]`, which guarantees at compile time that
+ * every string is a legal member of the union — a typo would be
+ * a type error, not a silent runtime surprise.
+ */
+const BUCKET_KEYS: readonly BucketKey[] = [
+  'anytime',
+  'year',
+  'month',
+  'week',
+];
+
+/**
+ * Type guard: is the given value one of the four bucket keys?
+ */
+const isBucketKey = (value: unknown): value is BucketKey =>
+  typeof value === 'string' &&
+  (BUCKET_KEYS as readonly string[]).includes(value);
+
+/**
+ * Return a fresh `CandidatesByBucket` with every bucket set to an
+ * empty array. Used when a topic's slot is first created.
+ */
+const emptyBuckets = (): CandidatesByBucket => ({
+  anytime: [],
+  year: [],
+  month: [],
+  week: [],
+});
+
+/**
+ * Return a fresh per-bucket progress record with every bucket set
+ * to null. Used when a topic's search progress is first created.
+ */
+const emptyProgressBuckets = (): Record<
+  BucketKey,
+  SearchProgress | null
+> => ({
+  anytime: null,
+  year: null,
+  month: null,
+  week: null,
+});
+
+/**
+ * Read the `timeRange` field from a marker's payload, or return
+ * null. Used by the marker handler to route SEARCH_PROGRESS and
+ * SEARCH_RESULT markers to their correct bucket.
+ */
+const readTimeRange = (payload: unknown): BucketKey | null => {
+  if (typeof payload !== 'object' || payload === null) {
+    return null;
+  }
+  const t = (payload as { timeRange?: unknown }).timeRange;
+  return isBucketKey(t) ? t : null;
+};
+
 
 // =============================================================================
 //  Marker payload narrowing
@@ -518,61 +726,117 @@ export const useResearchStore = create<ResearchStoreState>(
     // ---- Marker handler ----
     //
     // The store's single point of contact with the marker stream.
-    // Every marker type is checked against the store's active
-    // topic; a marker for a different topic is dropped. This is
-    // what makes the store's single-topic model work under
-    // parallel operations — see the file header.
+    // Every marker is routed to its own topic's slot using the
+    // `topicId` on the payload — markers that arrive while the
+    // user is viewing a different topic still update the correct
+    // slot. Search-stage markers additionally carry a `timeRange`
+    // field that identifies which bucket the marker's data
+    // belongs to.
     _handleMarker: (event: MarkerEvent): void => {
       const topicId = readTopicId(event.payload);
       if (topicId === null) return;
-      if (topicId !== get().activeTopicId) return;
 
       switch (event.type) {
         case 'SEARCH_PROGRESS': {
           const progress = narrowSearchProgress(event.payload);
-          if (progress !== null) {
-            set({ searchProgress: progress });
-          }
+          if (progress === null) return;
+          // A SEARCH_PROGRESS marker from an older pipeline (before
+          // the bucket change) would lack a `timeRange` field.
+          // Route those to the `anytime` bucket so the UI still
+          // shows something rather than dropping the marker
+          // silently. Once the pipeline is fully upgraded every
+          // marker carries a bucket and this fallback becomes
+          // unreachable.
+          const bucket: BucketKey =
+            readTimeRange(event.payload) ?? 'anytime';
+          set((state) => {
+            const topicProgress =
+              state.searchProgressByTopic[topicId] ??
+              emptyProgressBuckets();
+            return {
+              searchProgressByTopic: {
+                ...state.searchProgressByTopic,
+                [topicId]: {
+                  ...topicProgress,
+                  [bucket]: progress,
+                },
+              },
+            };
+          });
           return;
         }
 
         case 'SEARCH_RESULT': {
           const candidates = narrowCandidates(event.payload);
-          set({
-            candidates,
-            // A terminal marker ends the operation's
-            // in-flight state. If the search yielded zero
-            // candidates the store still shows 'idle' — the
-            // distinction between "empty result" and "still
-            // running" is what the UI actually needs.
-            status: 'idle',
-            searchProgress: null,
+          const bucket: BucketKey =
+            readTimeRange(event.payload) ?? 'anytime';
+          set((state) => {
+            const topicBuckets =
+              state.candidatesByTopic[topicId] ?? emptyBuckets();
+            const topicProgress =
+              state.searchProgressByTopic[topicId] ??
+              emptyProgressBuckets();
+            return {
+              candidatesByTopic: {
+                ...state.candidatesByTopic,
+                [topicId]: {
+                  ...topicBuckets,
+                  [bucket]: candidates,
+                },
+              },
+              // Clear this bucket's progress — the bucket is done.
+              searchProgressByTopic: {
+                ...state.searchProgressByTopic,
+                [topicId]: {
+                  ...topicProgress,
+                  [bucket]: null,
+                },
+              },
+            };
           });
+          // The overall status is owned by the `runFullSearch`
+          // action, not by individual SEARCH_RESULT markers — a
+          // four-bucket search is not idle until every bucket's
+          // IPC call has resolved.
           return;
         }
 
         case 'EXTRACT_PROGRESS': {
           const progress = narrowExtractProgress(event.payload);
           if (progress !== null) {
-            set({ extractProgress: progress });
+            set((state) => ({
+              extractProgressByTopic: {
+                ...state.extractProgressByTopic,
+                [topicId]: progress,
+              },
+            }));
           }
           return;
         }
 
         case 'EXTRACT_DONE': {
           const savedCount = narrowSavedCount(event.payload);
-          set({
-            extractedCount: savedCount,
-            status: 'idle',
-            extractProgress: null,
-          });
+          set((state) => ({
+            extractedCountByTopic: {
+              ...state.extractedCountByTopic,
+              [topicId]: savedCount,
+            },
+            extractProgressByTopic: {
+              ...state.extractProgressByTopic,
+              [topicId]: null,
+            },
+            statusByTopic: {
+              ...state.statusByTopic,
+              [topicId]: 'idle',
+            },
+          }));
           return;
         }
 
         case 'TASK_END': {
           // The main process's task-boundary marker. If the
           // task ended with a failure status, ensure the
-          // store is not stuck in a transient state.
+          // topic's slot is not stuck in a transient state.
           const payload = event.payload as
             | { status?: unknown }
             | null
@@ -582,7 +846,12 @@ export const useResearchStore = create<ResearchStoreState>(
               ? payload.status
               : '';
           if (status === 'failed' || status === 'aborted') {
-            set({ status: 'idle' });
+            set((state) => ({
+              statusByTopic: {
+                ...state.statusByTopic,
+                [topicId]: 'idle',
+              },
+            }));
           }
           return;
         }
@@ -597,61 +866,122 @@ export const useResearchStore = create<ResearchStoreState>(
       }
     },
 
-    // ---- startSearch ----
-    startSearch: async (
+    // ---- runFullSearch ----
+    runFullSearch: async (
       topicId: string,
       title: string,
-      keywords?: string[]
+      keywords: string[],
+      bucketConfig: BucketConfig
     ): Promise<boolean> => {
-      // Clear any stale state from a previous search on a
-      // different topic. The new topic is now the active one.
-      set({
+      // Reset this topic's search state. The previous search's
+      // candidates — from any run, on any buckets — are cleared
+      // because a fresh search is a fresh population.
+      set((state) => ({
         activeTopicId: topicId,
-        candidates: [],
-        searchProgress: null,
-        extractProgress: null,
-        extractedCount: 0,
-        error: null,
-        status: 'searching',
-      });
+        candidatesByTopic: {
+          ...state.candidatesByTopic,
+          [topicId]: emptyBuckets(),
+        },
+        searchProgressByTopic: {
+          ...state.searchProgressByTopic,
+          [topicId]: emptyProgressBuckets(),
+        },
+        statusByTopic: {
+          ...state.statusByTopic,
+          [topicId]: 'searching',
+        },
+        errorByTopic: {
+          ...state.errorByTopic,
+          [topicId]: null,
+        },
+      }));
+
+      // The four buckets, in run order, paired with their
+      // configured counts. A bucket whose count is zero is
+      // dropped from the plan entirely (see Q8.3 — zero-value
+      // buckets are skipped, not searched-and-empty).
+      const bucketPlan: ReadonlyArray<{
+        key: BucketKey;
+        count: number;
+      }> = [
+        { key: 'anytime', count: bucketConfig.anyTime },
+        { key: 'year', count: bucketConfig.pastYear },
+        { key: 'month', count: bucketConfig.pastMonth },
+        { key: 'week', count: bucketConfig.pastWeek },
+      ].filter((entry) => entry.count > 0);
+
+      if (bucketPlan.length === 0) {
+        // Nothing to search. Mark the operation complete and
+        // return success — an empty configuration is not a
+        // failure, it is a no-op.
+        set((state) => ({
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'idle',
+          },
+        }));
+        return true;
+      }
 
       try {
-        const result = await window.electronAPI.research.search(
-          topicId,
-          title,
-          keywords
-        );
+        // Sequential — not parallel — per the plan's Q8.7 /
+        // C5 decision: four sequential IPC calls preserve the
+        // per-bucket progress markers the UI relies on and
+        // avoid Google rate-limiting a burst of parallel
+        // requests from the same session.
+        for (const entry of bucketPlan) {
+          const result = await window.electronAPI.research.search(
+            topicId,
+            title,
+            keywords,
+            entry.key
+          );
 
-        if (result.success) {
-          // The candidate list itself arrives over the
-          // marker channel — this return path is a
-          // summary. If the marker has already landed the
-          // list is populated; if not, it will be on the
-          // next event. Either way the operation is done.
-          set({ status: 'idle', searchProgress: null });
-          return true;
+          if (!result.success) {
+            set((state) => ({
+              statusByTopic: {
+                ...state.statusByTopic,
+                [topicId]: 'error',
+              },
+              errorByTopic: {
+                ...state.errorByTopic,
+                [topicId]: result.error ?? 'Search failed.',
+              },
+            }));
+            return false;
+          }
+          // Success — the bucket's candidates arrive over the
+          // marker channel (SEARCH_RESULT with `timeRange`).
+          // The marker handler writes them into the slot; this
+          // action does not need to touch candidates directly.
         }
 
-        set({
-          status: 'error',
-          error: result.error ?? 'Search failed.',
-          searchProgress: null,
-        });
-        return false;
+        set((state) => ({
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'idle',
+          },
+        }));
+        return true;
       } catch (err) {
         // A rejected IPC promise is unusual — the preload
         // does not reject on business failures — but can
         // happen if the channel is unregistered (during a
         // window between app start and IPC registration)
         // or the renderer's context has been torn down.
-        set({
-          status: 'error',
-          error:
-            err instanceof Error
-              ? err.message
-              : 'Unable to reach the search service.',
-          searchProgress: null,
-        });
+        set((state) => ({
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'error',
+          },
+          errorByTopic: {
+            ...state.errorByTopic,
+            [topicId]:
+              err instanceof Error
+                ? err.message
+                : 'Unable to reach the search service.',
+          },
+        }));
         return false;
       }
     },
@@ -661,13 +991,25 @@ export const useResearchStore = create<ResearchStoreState>(
       topicId: string,
       urls: string[]
     ): Promise<number> => {
-      set({
+      set((state) => ({
         activeTopicId: topicId,
-        extractProgress: null,
-        extractedCount: 0,
-        error: null,
-        status: 'extracting',
-      });
+        extractProgressByTopic: {
+          ...state.extractProgressByTopic,
+          [topicId]: null,
+        },
+        extractedCountByTopic: {
+          ...state.extractedCountByTopic,
+          [topicId]: 0,
+        },
+        errorByTopic: {
+          ...state.errorByTopic,
+          [topicId]: null,
+        },
+        statusByTopic: {
+          ...state.statusByTopic,
+          [topicId]: 'extracting',
+        },
+      }));
 
       try {
         const result = await window.electronAPI.research.extract(
@@ -677,32 +1019,107 @@ export const useResearchStore = create<ResearchStoreState>(
 
         if (result.success && result.data) {
           const savedCount = result.data.savedCount;
-          set({
-            extractedCount: savedCount,
-            status: 'idle',
-            extractProgress: null,
-          });
+          set((state) => ({
+            extractedCountByTopic: {
+              ...state.extractedCountByTopic,
+              [topicId]: savedCount,
+            },
+            statusByTopic: {
+              ...state.statusByTopic,
+              [topicId]: 'idle',
+            },
+            extractProgressByTopic: {
+              ...state.extractProgressByTopic,
+              [topicId]: null,
+            },
+          }));
           return savedCount;
         }
 
-        set({
-          status: 'error',
-          error: result.error ?? 'Extraction failed.',
-          extractProgress: null,
-        });
+        set((state) => ({
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'error',
+          },
+          errorByTopic: {
+            ...state.errorByTopic,
+            [topicId]: result.error ?? 'Extraction failed.',
+          },
+          extractProgressByTopic: {
+            ...state.extractProgressByTopic,
+            [topicId]: null,
+          },
+        }));
         return 0;
       } catch (err) {
-        set({
-          status: 'error',
-          error:
-            err instanceof Error
-              ? err.message
-              : 'Unable to reach the extraction service.',
-          extractProgress: null,
-        });
+        set((state) => ({
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'error',
+          },
+          errorByTopic: {
+            ...state.errorByTopic,
+            [topicId]:
+              err instanceof Error
+                ? err.message
+                : 'Unable to reach the extraction service.',
+          },
+          extractProgressByTopic: {
+            ...state.extractProgressByTopic,
+            [topicId]: null,
+          },
+        }));
         return 0;
       }
     },
+
+        // ---- retryFailed ----
+    retryFailed: async (topicId: string): Promise<number> => {
+      // Read the topic's failed-URL list. If there is nothing
+      // to retry, return zero without invoking any IPC — a
+      // retry with an empty list is not an operation.
+      const failed = get().failedByTopic[topicId] ?? [];
+      if (failed.length === 0) {
+        return 0;
+      }
+
+      // Retry only the failed URLs. `runExtraction` will reset
+      // this topic's extraction state (progress, count, error)
+      // and drive the extraction on the given subset — the
+      // successful documents already on disk are not touched.
+      const urls = failed.map((record) => record.url);
+      const savedCount = await get().runExtraction(topicId, urls);
+
+      // Refresh the failed list from disk. Some of the retried
+      // URLs may now have succeeded, and the new `failures.json`
+      // reflects which — the store's cached list must match.
+      //
+      // A refresh failure is logged but does not affect the
+      // return value: the retry itself already happened, and
+      // the caller cares about how many documents were saved,
+      // not whether the failure list was refreshed. A stale
+      // failed list will be re-read on the next topic open.
+      try {
+        const result =
+          await window.electronAPI.research.getFailures(topicId);
+        if (result.success && result.data) {
+          set((state) => ({
+            failedByTopic: {
+              ...state.failedByTopic,
+              [topicId]: result.data ?? [],
+            },
+          }));
+        }
+      } catch (err) {
+        console.error(
+          '[researchStore] retryFailed refresh failed:',
+          err
+        );
+      }
+
+      return savedCount;
+    },
+
 
     // ---- cancelOperation ----
     cancelOperation: async (topicId: string): Promise<void> => {
@@ -719,29 +1136,156 @@ export const useResearchStore = create<ResearchStoreState>(
           err
         );
       }
-      // The store's `status` is flipped by the marker handler
-      // when the main process emits the `killed` /
-      // `TASK_END` marker for this task. This function does
-      // not optimistically set `status: 'idle'` — doing so
-      // would race against a terminal marker that arrives a
-      // moment later and briefly put the UI in a state the
-      // operation never actually passed through.
+      // The topic's `statusByTopic` entry is flipped by the
+      // marker handler when the main process emits the `killed`
+      // / `TASK_END` marker for this task. This function does
+      // not optimistically set `'idle'` — doing so would race
+      // against a terminal marker that arrives a moment later
+      // and briefly put the UI in a state the operation never
+      // actually passed through.
     },
+
+        // ---- loadCandidates ----
+    loadCandidates: async (topicId: string): Promise<void> => {
+      // "Fetch on first open": if the topic already has a
+      // candidates slot (even if all its buckets are empty),
+      // the data has already been loaded this session and
+      // there is nothing to do.
+      if (get().candidatesByTopic[topicId] !== undefined) {
+        return;
+      }
+
+      try {
+        const candidatesResult =
+          await window.electronAPI.research.getCandidates(topicId);
+
+        if (candidatesResult.success) {
+          // The IPC handler returns a bucket-keyed record. A
+          // success with no `data` (the file is absent, which
+          // the handler normalizes to an empty result) still
+          // counts as loaded — the topic simply has no search
+          // history yet.
+          set((state) => ({
+            candidatesByTopic: {
+              ...state.candidatesByTopic,
+              [topicId]: candidatesResult.data ?? emptyBuckets(),
+            },
+          }));
+        }
+        // A failure is logged but does NOT write a slot — a
+        // 500 from the backend or an unreadable file should not
+        // be cached as "loaded, empty" because the next mount
+        // should retry.
+
+        const failuresResult =
+          await window.electronAPI.research.getFailures(topicId);
+
+        if (failuresResult.success) {
+          set((state) => ({
+            failedByTopic: {
+              ...state.failedByTopic,
+              [topicId]: failuresResult.data ?? [],
+            },
+          }));
+        }
+      } catch (err) {
+        // An IPC rejection — the channel is unregistered or the
+        // renderer's context has been torn down. Same policy as
+        // the failure branches above: no slot is written.
+        console.error(
+          '[researchStore] loadCandidates failed:',
+          err
+        );
+      }
+    },
+
 
     // ---- Clear helpers ----
-    clearCandidates: (): void => {
-      set({ candidates: [], searchProgress: null });
+    clearCandidates: (topicId: string): void => {
+      set((state) => ({
+        candidatesByTopic: {
+          ...state.candidatesByTopic,
+          [topicId]: emptyBuckets(),
+        },
+        searchProgressByTopic: {
+          ...state.searchProgressByTopic,
+          [topicId]: emptyProgressBuckets(),
+        },
+      }));
     },
 
-    clearError: (): void => {
-      set({ error: null });
-      if (get().status === 'error') {
-        set({ status: 'idle' });
+    clearError: (topicId: string): void => {
+      set((state) => ({
+        errorByTopic: {
+          ...state.errorByTopic,
+          [topicId]: null,
+        },
+      }));
+      if (get().statusByTopic[topicId] === 'error') {
+        set((state) => ({
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'idle',
+          },
+        }));
       }
     },
 
     reset: (): void => {
       set({ ...INITIAL_STATE });
+    },
+
+    
+    // ---- Per-topic getters ----
+    // Each getter reads one topic's value from the corresponding
+    // per-topic record, with a safe default for a topic that has
+    // no entry yet. The getters are convenience wrappers over
+    // the records, not a second source of truth.
+
+    getCandidates: (topicId: string): SearchCandidate[] => {
+      const buckets = get().candidatesByTopic[topicId];
+      if (buckets === undefined) {
+        return [];
+      }
+      // Flatten in bucket order so the output is deterministic.
+      return [
+        ...buckets.anytime,
+        ...buckets.year,
+        ...buckets.month,
+        ...buckets.week,
+      ];
+    },
+
+    getCandidatesByBucket: (topicId: string): CandidatesByBucket => {
+      return get().candidatesByTopic[topicId] ?? emptyBuckets();
+    },
+
+    getSearchProgress: (
+      topicId: string
+    ): Record<BucketKey, SearchProgress | null> => {
+      return (
+        get().searchProgressByTopic[topicId] ?? emptyProgressBuckets()
+      );
+    },
+
+    getExtractProgress: (topicId: string): ExtractProgress | null => {
+      return get().extractProgressByTopic[topicId] ?? null;
+    },
+
+    getExtractedCount: (topicId: string): number => {
+      return get().extractedCountByTopic[topicId] ?? 0;
+    },
+
+    getFailed: (topicId: string): FailedUrlRecord[] => {
+      return get().failedByTopic[topicId] ?? [];
+    },
+
+    getStatus: (topicId: string): ResearchStoreStatus => {
+      return get().statusByTopic[topicId] ?? 'idle';
+    },
+
+    getError: (topicId: string): string | null => {
+      return get().errorByTopic[topicId] ?? null;
     },
   })
 );

@@ -3,43 +3,49 @@
  * validation feature.
  *
  * Holds the state that drives the Report tab on the topic-detail
- * page while a validation run is in flight and after it finishes:
+ * page while a validation run is in flight and after it finishes.
+ * Every piece of per-topic state is a record keyed by the topic's
+ * ID, so switching between topics never clobbers the previous
+ * topic's data:
  *
- *   activeArticleId — which article the state belongs to.
- *   isRunning       — whether a validation operation is in flight.
- *                     Drives the Report tab's progress panel and
- *                     the disabled state of the "Run Validation"
- *                     button.
- *   progress        — the live progress of the running operation
- *                     (which of the six validators is currently
- *                     executing), or null when no run is in
- *                     flight.
- *   report          — the `Report` object the backend returned for
- *                     the last successful validation run, or null
- *                     before the first run. The Report tab's six
- *                     panels render from this object's section
- *                     fields.
- *   status          — a coarse lifecycle flag mirroring the shape
- *                     every other store uses (`'idle'`,
- *                     `'loading'`, `'error'`). `isRunning` is
- *                     derived from this and is exposed as a
- *                     convenience for the UI.
- *   error           — the last error message, or null.
+ *   activeArticleId      — the article that most recently began a
+ *                          validation run. A tracking field only.
+ *   activeTopicId        — the topic that most recently began a
+ *                          validation run. A tracking field only.
+ *   reportByTopic        — per-topic `Report` object the backend
+ *                          returned for the last successful
+ *                          validation run, or null when the topic
+ *                          has been checked and has no report.
+ *                          Absence of a key means "not yet loaded".
+ *   isRunningByTopic     — per-topic in-flight flag. Drives the
+ *                          Report tab's progress panel and the
+ *                          disabled state of the "Run Validation"
+ *                          button for the topic being viewed.
+ *   progressByTopic      — per-topic live progress of the running
+ *                          operation (which of the six validators
+ *                          is currently executing), or null when
+ *                          no run is in flight for that topic.
+ *   statusByTopic        — per-topic lifecycle flag mirroring the
+ *                          shape every other store uses (`'idle'`,
+ *                          `'loading'`, `'error'`). Absence of a
+ *                          key is treated as `'idle'`.
+ *   errorByTopic         — per-topic last error message, or null.
  *
  * And the actions:
  *
- *   runValidation(articleId) — start a validation operation. Sets
- *                              `isRunning: true`, kicks off the
- *                              IPC call, and updates state as the
- *                              operation runs and as markers
- *                              arrive.
- *   loadReport(articleId)    — fetch the most recent report for
- *                              an article from the backend
+ *   runValidation(articleId, topicId) — start a validation
+ *                              operation for one topic. Sets that
+ *                              topic's `isRunningByTopic` slot to
+ *                              true, kicks off the IPC call, and
+ *                              updates state as the operation runs
+ *                              and as markers arrive.
+ *   loadReport(articleId, topicId) — fetch the most recent report
+ *                              for an article from the backend
  *                              without re-running the validators.
- *   setReport(report)        — set the current report directly,
+ *   setReport(topicId, report) — set a topic's report directly,
  *                              without a network round trip.
- *   clearError()             — dismiss the last error.
- *   reset()                  — return every field to its initial
+ *   clearError(topicId)        — dismiss one topic's last error.
+ *   reset()                    — return every field to its initial
  *                              value.
  *
  * ── How the store receives updates ────────────────────────────
@@ -78,37 +84,47 @@
  *   check and writes its report into the topic's `reports/`
  *   folder). The two identifiers are both required:
  *
- *     * `activeArticleId` is what the renderer passes back to the
+ *     * The `articleId` argument to `runValidation` and
+ *       `loadReport` is what the store passes back to the
  *       `validation:run` and `validation:report` IPC channels.
  *
- *     * `activeTopicId` is what the marker handler compares
- *       against each incoming marker's `topicId` field.
+ *     * The `topicId` argument identifies which per-topic slot
+ *       the operation's state belongs to. It also matches the
+ *       `topicId` field on every Python-emitted marker, so the
+ *       marker handler can route a marker to the correct topic's
+ *       slot even when the user is viewing a different topic.
  *
  *   The caller (the Report tab component) knows both values — it
  *   has the `Article` object in hand and can read its `topicId`
- *   field — and passes them to `runValidation` and `loadReport`
- *   together. The store does not attempt to derive one from the
- *   other.
+ *   field — and passes them together. The store does not attempt
+ *   to derive one from the other.
  *
- * ── Why `isRunning` is not flipped by the VALIDATION_DONE marker ─
+ *   `activeArticleId` and `activeTopicId` are retained as
+ *   tracking fields reflecting the most recent `runValidation`
+ *   call. They are not read by the marker handler or by any
+ *   action to scope behavior; they exist for diagnostic surfaces.
+ *
+ * ── Why `isRunningByTopic` is not flipped by VALIDATION_DONE ───
  *
  *   The `VALIDATION_DONE` marker is emitted by the Python script
  *   BEFORE the validation IPC handler has finished its work.
  *   After the marker arrives, the main process still has to (a)
  *   read the report file from disk, (b) POST it to the backend's
  *   `/api/reports` endpoint, and (c) return the resulting
- *   `Report` to the renderer. Flipping `isRunning` to false on
- *   the marker would tell the UI "we are done" before the report
- *   object is in the store, producing a brief interval where the
- *   Report tab shows neither a progress panel nor a finished
- *   report.
+ *   `Report` to the renderer. Flipping the topic's
+ *   `isRunningByTopic` slot to false on the marker would tell the
+ *   UI "we are done" before the report object is in the store,
+ *   producing a brief interval where the Report tab shows neither
+ *   a progress panel nor a finished report.
  *
- *   The `runValidation` action therefore owns `isRunning` from
- *   start to finish. The `VALIDATION_DONE` marker handler only
- *   clears the `progress` field — the progress panel is no
- *   longer relevant once the child has exited — and the
- *   `runValidation` action's terminal branch flips both `status`
- *   and `isRunning` when the IPC promise resolves.
+ *   The `runValidation` action therefore owns the topic's
+ *   `isRunningByTopic` slot from start to finish. The
+ *   `VALIDATION_DONE` marker handler only clears the topic's
+ *   `progressByTopic` slot — the progress panel is no longer
+ *   relevant once the child has exited — and the
+ *   `runValidation` action's terminal branch flips both the
+ *   topic's `statusByTopic` and `isRunningByTopic` entries when
+ *   the IPC promise resolves.
  *
  * ── Why the store is NOT persisted ────────────────────────────
  *
@@ -118,14 +134,26 @@
  *   from the backend. The `isRunning`, `progress`, and `error`
  *   fields are ephemeral by definition.
  *
- * ── The single-article design ─────────────────────────────────
+ * ── The per-topic design ───────────────────────────────────────
  *
- *   The store holds one article's validation state at a time,
- *   identified by `activeArticleId`. Same model as the sibling
- *   stores. A future session that wanted parallel validation
- *   across multiple articles would convert the flat state into a
- *   `Map<articleId, ValidationState>` — a mechanical change
- *   confined to this file.
+ *   The store holds per-topic validation state — one slot per
+ *   topic, keyed by the topic's ID. A validation run for topic B
+ *   does not clobber a previous report for topic A; the store
+ *   simply holds a slot for every topic that has been validated
+ *   this session. When the user navigates back to topic A, its
+ *   report is already in the store.
+ *
+ *   The marker handler routes each incoming marker to its own
+ *   topic's slot using the `topicId` on the payload, so markers
+ *   that arrive while the user is viewing a different topic are
+ *   still applied to the correct slot.
+ *
+ *   A topic can own multiple article versions; the store
+ *   currently keys the report by topic rather than by article, so
+ *   validating a second article of the same topic overwrites the
+ *   first article's cached report. A future session that wanted
+ *   per-article keying would change the record key from `topicId`
+ *   to `articleId` — a mechanical change confined to this file.
  *
  * ── Why the type-only import from listenerBridge ──────────────
  *
@@ -156,10 +184,10 @@
  *     store's handler explicitly ignores them.
  *
  *   - It does not distinguish "no report yet" from "the report is
- *     being fetched". Both cases are represented by
- *     `report === null` with `isRunning` being the
- *     differentiator. A component that renders the Report tab
- *     reads both fields.
+ *     being fetched". Both cases are represented by the topic's
+ *     `reportByTopic` slot being null, with the topic's
+ *     `isRunningByTopic` slot being the differentiator. A
+ *     component that renders the Report tab reads both.
  */
 
 import { create } from 'zustand';
@@ -229,46 +257,49 @@ export type ValidationStoreStatus = 'idle' | 'loading' | 'error';
 export interface ValidationStoreState {
   // ---- Data ----
 
-  /** The article whose report the store holds, or null before any
-   *  validation run. */
+  /** The article that most recently began a validation run, or
+   *  null before any run. A tracking field only — the marker
+   *  handler routes each marker to its own topic's slot using
+   *  the payload's `topicId`, not this value. */
   activeArticleId: string | null;
 
-  /** The topic whose markers the store filters on. Populated by
-   *  the caller when starting a validation run, so the marker
-   *  handler can match the `topicId` field that the Python-side
-   *  markers carry. */
+  /** The topic that most recently began a validation run, or
+   *  null before any run. A tracking field only. */
   activeTopicId: string | null;
 
-  /** Whether a validation run is currently in flight. */
-  isRunning: boolean;
+  /** Per-topic `Report` from the last successful validation, or
+   *  null when the topic has been checked and has no report.
+   *  Absence of a key means "not yet loaded". */
+  reportByTopic: Record<string, Report | null>;
 
-  /** The live progress of the running validation, or null when
-   *  no run is in flight. */
-  progress: ValidationProgress | null;
+  /** Per-topic in-flight flag. Absence of a key is treated as
+   *  `false`. */
+  isRunningByTopic: Record<string, boolean>;
 
-  /** The `Report` object from the last successful validation, or
-   *  null before the first one. */
-  report: Report | null;
+  /** Per-topic live progress of the running validation, or null
+   *  when no run is in flight for that topic. */
+  progressByTopic: Record<string, ValidationProgress | null>;
 
-  /** The store's async lifecycle state. */
-  status: ValidationStoreStatus;
+  /** Per-topic async lifecycle state. Absence of a key is treated
+   *  as `'idle'`. */
+  statusByTopic: Record<string, ValidationStoreStatus>;
 
-  /** The last error message, or null. */
-  error: string | null;
+  /** Per-topic last error message, or null. */
+  errorByTopic: Record<string, string | null>;
 
   // ---- Actions ----
 
   /**
    * Run a validation on an article. Invokes
    * `window.electronAPI.validation.run(articleId)` and updates
-   * state as the operation runs. Progress arrives through the
-   * marker channel; the final `Report` arrives as this action's
-   * return value.
+   * the topic's slots as the operation runs. Progress arrives
+   * through the marker channel; the final `Report` arrives as
+   * this action's return value.
    *
-   * The `topicId` argument is required so the store can filter
-   * the marker stream. The caller has the `Article` object in
-   * hand and reads its `topicId` field. See the file header for
-   * the reasoning on tracking both IDs.
+   * The `topicId` argument identifies which per-topic slot the
+   * operation's state belongs to. The caller has the `Article`
+   * object in hand and reads its `topicId` field. See the file
+   * header for the reasoning on tracking both IDs.
    *
    * Returns the created `Report` on success, or null on failure.
    */
@@ -278,29 +309,51 @@ export interface ValidationStoreState {
   ) => Promise<Report | null>;
 
   /**
-   * Fetch the most recent report for an article from the backend.
-   * Does not re-run the validators. Used by the Report tab's
-   * "load existing report on mount" flow.
+   * Fetch the most recent report for an article from the backend,
+   * and cache it in the topic's slot. Does not re-run the
+   * validators. Used by the Report tab's "load existing report
+   * on mount" flow.
    *
    * Returns the fetched `Report` on success, or null on failure.
    * A 404 (no report yet for this article) resolves as a null
-   * return with `error` set — the caller treats that as "no
-   * report yet" rather than as a hard failure.
+   * return with the topic's error slot set — the caller treats
+   * that as "no report yet" rather than as a hard failure.
    */
-  loadReport: (articleId: string) => Promise<Report | null>;
+  loadReport: (
+    articleId: string,
+    topicId: string
+  ) => Promise<Report | null>;
 
   /**
-   * Set the current report directly, without a network round
-   * trip. Used by a caller that produced a Report through some
-   * other path or wants to restore a previously-cached report.
+   * Set a topic's report directly, without a network round trip.
+   * Used by a caller that produced a Report through some other
+   * path, or that wants to restore a previously-cached report.
    */
-  setReport: (report: Report | null) => void;
+  setReport: (topicId: string, report: Report | null) => void;
 
-  /** Clear the last error message. */
-  clearError: () => void;
+  /** Clear one topic's last error message. */
+  clearError: (topicId: string) => void;
 
   /** Reset every field to its initial value. */
   reset: () => void;
+
+  // ---- Per-topic getters ----
+
+  /** Return the cached report for a topic, or null when none is
+   *  loaded or the topic has no report. */
+  getReport: (topicId: string) => Report | null;
+
+  /** Return whether a validation run is in flight for a topic. */
+  getIsRunning: (topicId: string) => boolean;
+
+  /** Return the live progress for a topic, or null when none. */
+  getProgress: (topicId: string) => ValidationProgress | null;
+
+  /** Return the async lifecycle state for a topic. */
+  getStatus: (topicId: string) => ValidationStoreStatus;
+
+  /** Return the last error message for a topic, or null. */
+  getError: (topicId: string) => string | null;
 
   /**
    * Internal — route one marker event to the correct state
@@ -322,11 +375,11 @@ export interface ValidationStoreState {
 const INITIAL_STATE = {
   activeArticleId: null as string | null,
   activeTopicId: null as string | null,
-  isRunning: false,
-  progress: null as ValidationProgress | null,
-  report: null as Report | null,
-  status: 'idle' as ValidationStoreStatus,
-  error: null as string | null,
+  reportByTopic: {} as Record<string, Report | null>,
+  isRunningByTopic: {} as Record<string, boolean>,
+  progressByTopic: {} as Record<string, ValidationProgress | null>,
+  statusByTopic: {} as Record<string, ValidationStoreStatus>,
+  errorByTopic: {} as Record<string, string | null>,
 };
 
 // =============================================================================
@@ -399,28 +452,44 @@ export const useValidationStore = create<ValidationStoreState>(
     // other marker is ignored — CAPTCHA_REQUIRED, MANUAL_ACTION,
     // SEARCH_*, EXTRACT_*, WRITER_*, and the task-boundary
     // markers all belong to other stores.
+    //
+    // Each marker is routed to its own topic's slot using the
+    // `topicId` on the payload. The handler does NOT filter on
+    // `activeTopicId` — a marker that arrives for a topic the
+    // user is not currently viewing must still update that
+    // topic's slot, so that navigating back to it shows the
+    // correct state.
     _handleMarker: (event: MarkerEvent): void => {
       const topicId = readTopicId(event.payload);
       if (topicId === null) return;
-      if (topicId !== get().activeTopicId) return;
 
       switch (event.type) {
         case 'VALIDATION_PROGRESS': {
           const progress = narrowValidationProgress(event.payload);
           if (progress !== null) {
-            set({ progress });
+            set((state) => ({
+              progressByTopic: {
+                ...state.progressByTopic,
+                [topicId]: progress,
+              },
+            }));
           }
           return;
         }
 
         case 'VALIDATION_DONE': {
-          // The child has exited. Clear the progress panel — the
-          // panel is no longer relevant — but leave `isRunning`
-          // and `status` for the `runValidation` action's
-          // in-flight promise to flip. See the file header's
-          // "Why isRunning is not flipped by the VALIDATION_DONE
-          // marker" section.
-          set({ progress: null });
+          // The child has exited. Clear this topic's progress
+          // panel — the panel is no longer relevant — but leave
+          // the topic's `isRunningByTopic` and `statusByTopic`
+          // for the `runValidation` action's in-flight promise to
+          // flip. See the file header's "Why isRunningByTopic is
+          // not flipped by VALIDATION_DONE" section.
+          set((state) => ({
+            progressByTopic: {
+              ...state.progressByTopic,
+              [topicId]: null,
+            },
+          }));
           return;
         }
 
@@ -438,19 +507,31 @@ export const useValidationStore = create<ValidationStoreState>(
       articleId: string,
       topicId: string
     ): Promise<Report | null> => {
-      // Set the active IDs and flip the in-flight flags. The
-      // `report` field is NOT cleared here — a re-run keeps the
-      // previous report visible until the new one lands, so the
-      // user is never staring at an empty tab while the
-      // operation runs.
-      set({
+      // Set the tracking IDs and flip the in-flight flags for
+      // this topic. The topic's `reportByTopic` slot is NOT
+      // cleared here — a re-run keeps the previous report
+      // visible until the new one lands, so the user is never
+      // staring at an empty tab while the operation runs.
+      set((state) => ({
         activeArticleId: articleId,
         activeTopicId: topicId,
-        isRunning: true,
-        progress: null,
-        status: 'loading',
-        error: null,
-      });
+        isRunningByTopic: {
+          ...state.isRunningByTopic,
+          [topicId]: true,
+        },
+        progressByTopic: {
+          ...state.progressByTopic,
+          [topicId]: null,
+        },
+        statusByTopic: {
+          ...state.statusByTopic,
+          [topicId]: 'loading',
+        },
+        errorByTopic: {
+          ...state.errorByTopic,
+          [topicId]: null,
+        },
+      }));
 
       try {
         const result =
@@ -458,21 +539,45 @@ export const useValidationStore = create<ValidationStoreState>(
 
         if (result.success && result.data) {
           const report = result.data;
-          set({
-            report,
-            isRunning: false,
-            progress: null,
-            status: 'idle',
-          });
+          set((state) => ({
+            reportByTopic: {
+              ...state.reportByTopic,
+              [topicId]: report,
+            },
+            isRunningByTopic: {
+              ...state.isRunningByTopic,
+              [topicId]: false,
+            },
+            progressByTopic: {
+              ...state.progressByTopic,
+              [topicId]: null,
+            },
+            statusByTopic: {
+              ...state.statusByTopic,
+              [topicId]: 'idle',
+            },
+          }));
           return report;
         }
 
-        set({
-          isRunning: false,
-          progress: null,
-          status: 'error',
-          error: result.error ?? 'Validation failed.',
-        });
+        set((state) => ({
+          isRunningByTopic: {
+            ...state.isRunningByTopic,
+            [topicId]: false,
+          },
+          progressByTopic: {
+            ...state.progressByTopic,
+            [topicId]: null,
+          },
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'error',
+          },
+          errorByTopic: {
+            ...state.errorByTopic,
+            [topicId]: result.error ?? 'Validation failed.',
+          },
+        }));
         return null;
       } catch (err) {
         // An IPC rejection is unusual — the preload resolves
@@ -483,84 +588,153 @@ export const useValidationStore = create<ValidationStoreState>(
           '[validationStore] runValidation failed:',
           err
         );
-        set({
-          isRunning: false,
-          progress: null,
-          status: 'error',
-          error:
-            err instanceof Error
-              ? err.message
-              : 'Unable to reach the validation service.',
-        });
+        set((state) => ({
+          isRunningByTopic: {
+            ...state.isRunningByTopic,
+            [topicId]: false,
+          },
+          progressByTopic: {
+            ...state.progressByTopic,
+            [topicId]: null,
+          },
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'error',
+          },
+          errorByTopic: {
+            ...state.errorByTopic,
+            [topicId]:
+              err instanceof Error
+                ? err.message
+                : 'Unable to reach the validation service.',
+          },
+        }));
         return null;
       }
     },
 
     // ---- loadReport ----
     loadReport: async (
-      articleId: string
+      articleId: string,
+      topicId: string
     ): Promise<Report | null> => {
-      // The `loadReport` action does not flip `isRunning`, for
-      // the same reason `topicStore.loadTopics` is the only
-      // action that flips `status: 'loading'` in the topics
-      // store — a read of existing data should not lock the
-      // UI's other controls the way a long-running operation
-      // does. The caller can manage its own loading indicator
-      // if it wants one.
+      // The `loadReport` action does not flip the topic's
+      // `isRunningByTopic` slot, for the same reason
+      // `topicStore.loadTopics` is the only action that flips
+      // `status: 'loading'` in the topics store — a read of
+      // existing data should not lock the UI's other controls
+      // the way a long-running operation does. The caller can
+      // manage its own loading indicator if it wants one.
       try {
         const result =
           await window.electronAPI.validation.report(articleId);
 
         if (result.success && result.data) {
-          set({
+          const report = result.data;
+          set((state) => ({
             activeArticleId: articleId,
-            report: result.data,
-            error: null,
-          });
-          return result.data;
+            activeTopicId: topicId,
+            reportByTopic: {
+              ...state.reportByTopic,
+              [topicId]: report,
+            },
+            errorByTopic: {
+              ...state.errorByTopic,
+              [topicId]: null,
+            },
+          }));
+          return report;
         }
 
         // A 404 ("no report yet for this article") arrives here
         // as `{ success: false, error: 'No report found...' }`.
-        // Setting `error` is correct — the caller sees the
-        // message — but the store does not flip `status` to
-        // 'error', because "no report yet" is a legitimate
-        // state for the Report tab's idle view, not a hard
-        // failure.
-        set({
-          error: result.error ?? 'No report found for this article.',
-        });
+        // Setting this topic's error slot is correct — the
+        // caller sees the message — but the store does not flip
+        // the topic's `statusByTopic` slot to 'error', because
+        // "no report yet" is a legitimate state for the Report
+        // tab's idle view, not a hard failure.
+        set((state) => ({
+          errorByTopic: {
+            ...state.errorByTopic,
+            [topicId]:
+              result.error ?? 'No report found for this article.',
+          },
+        }));
         return null;
       } catch (err) {
         console.error(
           '[validationStore] loadReport failed:',
           err
         );
-        set({
-          error:
-            err instanceof Error
-              ? err.message
-              : 'Unable to load the report.',
-        });
+        set((state) => ({
+          errorByTopic: {
+            ...state.errorByTopic,
+            [topicId]:
+              err instanceof Error
+                ? err.message
+                : 'Unable to load the report.',
+          },
+        }));
         return null;
       }
     },
 
     // ---- setReport ----
-    setReport: (report: Report | null): void => {
-      set({ report });
+    setReport: (topicId: string, report: Report | null): void => {
+      set((state) => ({
+        reportByTopic: {
+          ...state.reportByTopic,
+          [topicId]: report,
+        },
+      }));
     },
 
     // ---- Clear helpers ----
-    clearError: (): void => {
-      set({ error: null });
-      if (get().status === 'error') {
-        set({ status: 'idle' });
+    clearError: (topicId: string): void => {
+      set((state) => ({
+        errorByTopic: {
+          ...state.errorByTopic,
+          [topicId]: null,
+        },
+      }));
+      if (get().statusByTopic[topicId] === 'error') {
+        set((state) => ({
+          statusByTopic: {
+            ...state.statusByTopic,
+            [topicId]: 'idle',
+          },
+        }));
       }
     },
 
     reset: (): void => {
       set({ ...INITIAL_STATE });
+    },
+    
+    // ---- Per-topic getters ----
+    // Each getter reads one topic's value from the corresponding
+    // per-topic record, with a safe default for a topic that has
+    // no entry yet. The getters are convenience wrappers over
+    // the records, not a second source of truth.
+
+    getReport: (topicId: string): Report | null => {
+      return get().reportByTopic[topicId] ?? null;
+    },
+
+    getIsRunning: (topicId: string): boolean => {
+      return get().isRunningByTopic[topicId] ?? false;
+    },
+
+    getProgress: (topicId: string): ValidationProgress | null => {
+      return get().progressByTopic[topicId] ?? null;
+    },
+
+    getStatus: (topicId: string): ValidationStoreStatus => {
+      return get().statusByTopic[topicId] ?? 'idle';
+    },
+
+    getError: (topicId: string): string | null => {
+      return get().errorByTopic[topicId] ?? null;
     },
   })
 );

@@ -1109,7 +1109,7 @@ def run_write(
 
         _paste_content(page, textarea, body, index)
 
-    # ---- Render the prompt ----
+    # ---- Render the prompt ----   
     # The prompt's variables are populated from what the writer
     # knows: the topic id, and the list of source doc filenames.
     # The plan's prompt templates declare these variables
