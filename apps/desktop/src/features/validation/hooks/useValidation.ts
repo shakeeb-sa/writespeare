@@ -381,7 +381,7 @@ export const useValidation = (topicId: string): ValidationHookValue => {
   );
 
   // ---- Return ----
-  // A single object literal with all fourteen members. The order
+  // A single object literal with all thirteen members. The order
   // matches the interface above, so a reader comparing the two
   // does not have to hunt for a member's position.
   return {

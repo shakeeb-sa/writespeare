@@ -1,15 +1,21 @@
 /**
  * researchIPC — IPC handlers for the research feature (main process).
  *
- * Registers the three channels the renderer's
+ * Registers the six channels the renderer's
  * `window.electronAPI.research.*` methods invoke:
  *
- *   research:search   — run a search operation on a topic.
- *                       Delegates to `searchService.runSearch`.
- *   research:extract  — fetch and extract a batch of URLs.
- *                       Delegates to `extractionService.runExtract`.
- *   research:cancel   — stop the currently-running research
- *                       operation for a topic.
+ *   research:search        — run a search operation on a topic.
+ *                            Delegates to `searchService.runSearch`.
+ *   research:extract       — fetch and extract a batch of URLs.
+ *                            Delegates to `extractionService.runExtract`.
+ *   research:getCandidates — read the topic's saved candidate list
+ *                            from `<topicFolder>/candidates.json`.
+ *   research:getFailures   — read the topic's failed-URL records
+ *                            from `<topicFolder>/failures.json`.
+ *   research:clearFailures — delete the topic's `failures.json`
+ *                            file.
+ *   research:cancel        — stop the currently-running research
+ *                            operation for a topic.
  *
  * Each handler:
  *
@@ -34,8 +40,8 @@
  *      layer sees the same shape it would see from the backend's
  *      HTTP API.
  *
- * Why the handler's return value does not carry the full candidate
- * list:
+ * Why the `research:search` handler's return value does not
+ * carry the full candidate list:
  *
  *   The search service returns a `SearchServiceResult` whose
  *   `candidates` field carries the full list of `SearchCandidate`
@@ -55,6 +61,13 @@
  *   — the marker channel's data wins, because the marker channel
  *   is the streaming source of truth and the IPC return value is
  *   a summary.
+ *
+ *   The full candidate list, in its bucket-keyed shape, is
+ *   available via the separate `research:getCandidates` channel,
+ *   which reads the `candidates.json` file that the search service
+ *   writes after a successful search. That channel is what the
+ *   renderer's `loadCandidates` action uses on topic open; the
+ *   `research:search` return value is not used for that purpose.
  *
  * The cancel path:
  *
@@ -111,21 +124,30 @@
  *     the handler trusts that contract and forwards the shape.
  */
 
-import { ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { ipcMain, app, type IpcMainInvokeEvent } from 'electron';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 
 import {
   runSearch,
   getSearchTaskId,
+  type BucketKey,
+  type CandidatesByBucket,
+  type SearchCandidate,
 } from '../services/searchService.js';
 import { runExtract } from '../services/extractionService.js';
 import { getByTaskId } from '../services/childProcessManager.js';
-import type { ApiResponse } from '../../shared/types/index.js';
+import { apiGet } from '../../shared/api/client.js';
+import type {
+  ApiResponse,
+  Topic,
+} from '../../shared/types/index.js';
 
 // =============================================================================
 //  Channel name constants
 // =============================================================================
 //
-//  The three channel names are declared as constants so a future
+//  The six channel names are declared as constants so a future
 //  refactor that renames them (or a test that spies on them) has
 //  one place to change. The preload's `src/main/preload.ts`
 //  declares the same strings on the renderer side of the bridge —
@@ -135,32 +157,209 @@ import type { ApiResponse } from '../../shared/types/index.js';
 
 const CHANNEL_SEARCH = 'research:search';
 const CHANNEL_EXTRACT = 'research:extract';
+const CHANNEL_GET_CANDIDATES = 'research:getCandidates';
+const CHANNEL_GET_FAILURES = 'research:getFailures';
+const CHANNEL_CLEAR_FAILURES = 'research:clearFailures';
 const CHANNEL_CANCEL = 'research:cancel';
 
 // ============================================================
-//  Constants
+//  On-disk layout
+// ============================================================
+//
+//  The topic folder convention. Same values every other
+//  main-process module that touches the topic folder uses
+//  (`writerIPC.ts`, `validationIPC.ts`, `documentService.ts`).
+//  Duplicated across files because the convention is a cross-file
+//  contract and the plan's tree declares no shared layout module
+//  for the desktop main process. A change here must be reflected
+//  in the sibling files and on the Python side in the same commit.
+
+/** The app slug used as the top-level folder under the user's
+ *  application-data directory. Must match the Electron side's
+ *  `main/store.ts` slug and the Python side's
+ *  `core/file_io._APP_SLUG`. */
+const APP_SLUG = 'writespeare';
+
+/** The subfolder under the app slug that holds every topic. */
+const TOPICS_SUBFOLDER = 'topics';
+
+/** The filename of the per-topic candidate list, written by the
+ *  search service after a successful search. */
+const CANDIDATES_FILE = 'candidates.json';
+
+/** The filename of the per-topic failed-URL records, written by
+ *  the Python extraction dispatcher when a batch finishes with
+ *  at least one failure. */
+const FAILURES_FILE = 'failures.json';
+
+/** The set of legal time-range bucket identifiers, as a runtime
+ *  array. Its type is `readonly BucketKey[]`, which guarantees at
+ *  compile time that every string is a legal member of the union
+ *  the search service declares — a typo would be a type error,
+ *  not a silent runtime surprise. */
+const BUCKET_KEYS: readonly BucketKey[] = [
+  'anytime',
+  'year',
+  'month',
+  'week',
+];
+
+/** Narrow an `unknown` value to one of the four legal bucket
+ *  identifiers. Used by `handleSearch` to validate the
+ *  `timeRange` argument the renderer sends. */
+const isBucketKey = (value: unknown): value is BucketKey =>
+  typeof value === 'string' &&
+  (BUCKET_KEYS as readonly string[]).includes(value);
+
+// ============================================================
+//  Shared types
 // ============================================================
 
 /**
- * The default number of candidates a search collects when the
- * renderer does not specify one.
+ * One failed-extraction record, as stored in the topic's
+ * `failures.json` file.
  *
- * The renderer's `research.search(topicId, title, keywords?)`
- * signature (defined in `preload.ts`) does not carry a maxResults
- * parameter, so this handler supplies the default. Twenty
- * candidates gives the user a meaningful choice at the selection
- * step without making the initial search take an excessive amount
- * of time — Google's SERP yields ten per page, so twenty is two
- * pages.
- *
- * A future session that wants the search's max to depend on the
- * topic's preset (Quick=5, Balanced=10, Deep=20, per the user
- * journey document) would either extend the preload's signature
- * to pass the value explicitly, or read the topic from the
- * backend inside this handler before calling the service. Neither
- * change is in scope for the current session.
+ * The shape mirrors what the Python extraction dispatcher writes
+ * (`research/extract_dispatch.py`) and what the renderer's
+ * research store declares
+ * (`features/research/store/researchStore.ts`). All three
+ * declarations must stay in sync; the duplication is the same
+ * pattern `SearchCandidate` follows between `searchService.ts`
+ * and the renderer's store.
  */
-const DEFAULT_MAX_RESULTS = 20;
+export interface FailedUrlRecord {
+  /** The URL that failed to extract. */
+  url: string;
+
+  /** A short classification of the failure — e.g. `'timeout'`,
+   *  `'site_returned_404'`, `'empty_content'`. */
+  reason: string;
+
+  /** How many times this URL has been attempted across runs. */
+  attemptCount: number;
+
+  /** ISO-8601 timestamp of the most recent attempt. */
+  lastAttemptAt: string;
+
+  /** The full error message from the most recent attempt, if the
+   *  dispatcher captured one. Empty string when none was. */
+  errorMessage: string;
+}
+
+// ============================================================
+//  Path helpers
+// ============================================================
+
+/**
+ * Return the absolute path to a topic's folder. Same layout every
+ * other main-process module that touches the topic folder uses.
+ */
+const getTopicFolder = (topicId: string): string => {
+  return path.join(
+    app.getPath('appData'),
+    APP_SLUG,
+    TOPICS_SUBFOLDER,
+    topicId
+  );
+};
+
+/**
+ * Return the absolute path to a topic's `candidates.json` file.
+ */
+const getCandidatesPath = (topicId: string): string => {
+  return path.join(getTopicFolder(topicId), CANDIDATES_FILE);
+};
+
+/**
+ * Return the absolute path to a topic's `failures.json` file.
+ */
+const getFailuresPath = (topicId: string): string => {
+  return path.join(getTopicFolder(topicId), FAILURES_FILE);
+};
+
+// ============================================================
+//  File I/O helpers
+// ============================================================
+
+/**
+ * Read a JSON file and return its parsed value, or null when the
+ * file does not exist or cannot be parsed.
+ *
+ * Never throws. A missing file is a legitimate state — a fresh
+ * topic has no `candidates.json` until its first search and no
+ * `failures.json` until its first failed extraction — and a
+ * malformed file is a bug in whatever wrote it, not something
+ * the caller can act on. Both cases collapse to "no data", which
+ * is what the callers expect.
+ */
+const readJsonFileOrNull = async (
+  filepath: string
+): Promise<unknown> => {
+  try {
+    const raw = await fs.readFile(filepath, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Delete a file if it exists, swallowing ENOENT.
+ *
+ * Used by the `clearFailures` handler. The caller's intent is
+ * "the file should not exist"; a file that is already gone
+ * satisfies that intent, and reporting a failure for it would
+ * produce a spurious error toast on the renderer. Any other
+ * filesystem error (a permission denial, a directory in the
+ * file's place) IS propagated so the caller can surface it.
+ */
+const deleteFileIfExists = async (filepath: string): Promise<void> => {
+  try {
+    await fs.unlink(filepath);
+  } catch (err) {
+    // ENOENT is the "file does not exist" code. Node surfaces it
+    // as the `code` field on the thrown error; the narrow cast
+    // reaches the field without widening the type of `err`.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      return;
+    }
+    throw err;
+  }
+};
+
+// ============================================================
+//  Backend helpers
+// ============================================================
+
+/**
+ * Fetch the topic's `sourceCount` from the backend.
+ *
+ * The value is used as the search's `maxResults` — the number of
+ * candidates to collect. The plan's preset-wiring work (PR-2 of
+ * the approved runbook) replaced the previous hard-coded
+ * `DEFAULT_MAX_RESULTS = 20` with a per-topic value read from
+ * the topic's own record. Once PR-3 lands and the search runs
+ * once per time-range bucket, the value the caller needs becomes
+ * the topic's per-bucket configuration rather than the aggregate
+ * `sourceCount`; the change is to this helper's return shape and
+ * the caller's use of it.
+ *
+ * Throws when the topic cannot be fetched — a backend error, an
+ * expired session, a 404 for an unknown topic. The caller
+ * (`handleSearch`) catches and converts the throw into an error
+ * envelope. A search whose source count is unknown cannot be run
+ * meaningfully, so failing fast is the honest behavior.
+ */
+const fetchTopicSourceCount = async (topicId: string): Promise<number> => {
+  const result = await apiGet<Topic>(
+    `/topics/${encodeURIComponent(topicId)}`
+  );
+  if (result.success && result.data) {
+    return result.data.sourceCount;
+  }
+  throw new Error(result.error ?? 'Topic could not be loaded.');
+};
 
 // ============================================================
 //  research:search
@@ -194,7 +393,8 @@ const handleSearch = async (
   _event: IpcMainInvokeEvent,
   topicId: unknown,
   title: unknown,
-  keywords: unknown
+  keywords: unknown,
+  timeRange: unknown
 ): Promise<ApiResponse<{ candidates: string[] }>> => {
   // ---- Validate ----
   if (typeof topicId !== 'string' || topicId.trim().length === 0) {
@@ -202,6 +402,25 @@ const handleSearch = async (
   }
   if (typeof title !== 'string' || title.trim().length === 0) {
     return { success: false, error: 'title is required.' };
+  }
+
+  // The timeRange argument identifies which time-range bucket
+  // this search invocation is for. It is validated against the
+  // closed set the search service's `BucketKey` union declares.
+  //
+  // The value is NOT yet passed to `runSearch` — the search
+  // service's `SearchServiceOptions` interface does not accept a
+  // `timeRange` option in this session; adding that plumbing is
+  // PR-3 of the approved runbook. The handler accepts and
+  // validates the argument now so that the renderer's per-bucket
+  // call shape is stable across the PR boundary and so that an
+  // invalid value is rejected before any service call runs.
+  if (!isBucketKey(timeRange)) {
+    return {
+      success: false,
+      error:
+        'timeRange must be one of: anytime, year, month, week.',
+    };
   }
 
   // The keywords argument is optional and may arrive as
@@ -227,11 +446,28 @@ const handleSearch = async (
     }
   }
 
+  // ---- Fetch the topic's source count ----
+  // The search's max-results value comes from the topic's own
+  // record rather than a hard-coded constant. See the
+  // `fetchTopicSourceCount` helper for the reasoning and for the
+  // PR-3 follow-up.
+  let maxResults: number;
+  try {
+    maxResults = await fetchTopicSourceCount(topicId.trim());
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: `Could not load the topic: ${message}`,
+    };
+  }
+
   // ---- Delegate ----
   const result = await runSearch({
     query: title.trim(),
     keywords: normalizedKeywords,
-    maxResults: DEFAULT_MAX_RESULTS,
+    maxResults,
     topicId: topicId.trim(),
   });
 
@@ -329,6 +565,211 @@ const handleExtract = async (
 };
 
 // ============================================================
+//  research:getCandidates
+// ============================================================
+
+/**
+ * Read the topic's saved candidate list from disk.
+ *
+ * The list is written by `searchService.runSearch` after every
+ * successful search. Its shape is the bucket-keyed
+ * `CandidatesByBucket` record the renderer's research store
+ * expects — four buckets, each an array of `SearchCandidate`
+ * objects. In this session, all candidates land under the
+ * `anytime` bucket and the other three are empty; PR-3 changes
+ * the writer to route each per-bucket search's results to its
+ * own slot.
+ *
+ * A missing file — a topic that has never had a search run, or
+ * whose `candidates.json` was deleted — is a legitimate state,
+ * not an error. The handler returns a fully-populated bucket
+ * record with empty arrays in that case, matching the renderer's
+ * `loadCandidates` action's expectation that an un-searched
+ * topic populates its slot with an empty bucket record rather
+ * than leaving it undefined.
+ *
+ * A malformed file — content that does not parse, or parses to
+ * something other than an object — is also treated as "no saved
+ * candidates". The alternative (surfacing the malformed file as
+ * an error) would leave the user's Sources tab unable to load
+ * until the file was deleted by hand, which is a worse outcome
+ * than silently ignoring a corrupt cache.
+ */
+const handleGetCandidates = async (
+  _event: IpcMainInvokeEvent,
+  topicId: unknown
+): Promise<ApiResponse<CandidatesByBucket>> => {
+  // ---- Validate ----
+  if (typeof topicId !== 'string' || topicId.trim().length === 0) {
+    return { success: false, error: 'topicId is required.' };
+  }
+
+  const empty: CandidatesByBucket = {
+    anytime: [],
+    year: [],
+    month: [],
+    week: [],
+  };
+
+  // ---- Read the file ----
+  const filepath = getCandidatesPath(topicId.trim());
+  const raw = await readJsonFileOrNull(filepath);
+
+  // A missing or unparseable file → empty bucket record. See
+  // the docstring for why this is not an error.
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { success: true, data: empty };
+  }
+
+  // ---- Narrow the parsed value into CandidatesByBucket ----
+  // Each bucket must be an array; a bucket whose value is not an
+  // array falls back to an empty array. Individual candidates
+  // that do not match the `SearchCandidate` shape are skipped.
+  const record = raw as Record<string, unknown>;
+  const narrowBucket = (value: unknown): SearchCandidate[] => {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const out: SearchCandidate[] = [];
+    for (const entry of value) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const e = entry as Record<string, unknown>;
+      const url = e['url'];
+      const title = e['title'];
+      if (typeof url !== 'string' || url.length === 0) continue;
+      if (typeof title !== 'string' || title.length === 0) continue;
+      const snippet =
+        typeof e['snippet'] === 'string' ? e['snippet'] : '';
+      const platform =
+        typeof e['platform'] === 'string' ? e['platform'] : 'generic';
+      out.push({ url, title, snippet, platform });
+    }
+    return out;
+  };
+
+  return {
+    success: true,
+    data: {
+      anytime: narrowBucket(record['anytime']),
+      year: narrowBucket(record['year']),
+      month: narrowBucket(record['month']),
+      week: narrowBucket(record['week']),
+    },
+  };
+};
+
+// ============================================================
+//  research:getFailures
+// ============================================================
+
+/**
+ * Read the topic's failed-URL records from disk.
+ *
+ * The list is written by the Python extraction dispatcher
+ * (`research/extract_dispatch.py`) at the end of a batch that
+ * had at least one failure. Each record carries the URL, a
+ * short reason code, an attempt count, the last attempt's
+ * timestamp, and the most recent error message.
+ *
+ * A missing file — a topic whose extractions have all
+ * succeeded, or whose `failures.json` was deleted — returns an
+ * empty array. The alternative (surfacing "no file" as an
+ * error) would make the renderer's failed-URL banner appear for
+ * every topic that has never had a failure, which is the wrong
+ * visual state.
+ *
+ * A malformed file is treated the same as a missing one. A
+ * corrupt cache should not leave the Sources tab permanently
+ * unable to load.
+ */
+const handleGetFailures = async (
+  _event: IpcMainInvokeEvent,
+  topicId: unknown
+): Promise<ApiResponse<FailedUrlRecord[]>> => {
+  // ---- Validate ----
+  if (typeof topicId !== 'string' || topicId.trim().length === 0) {
+    return { success: false, error: 'topicId is required.' };
+  }
+
+  // ---- Read the file ----
+  const filepath = getFailuresPath(topicId.trim());
+  const raw = await readJsonFileOrNull(filepath);
+
+  if (!Array.isArray(raw)) {
+    return { success: true, data: [] };
+  }
+
+  // ---- Narrow the parsed value into FailedUrlRecord[] ----
+  const out: FailedUrlRecord[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const e = entry as Record<string, unknown>;
+    const url = e['url'];
+    const reason = e['reason'];
+    const attemptCount = e['attemptCount'];
+    const lastAttemptAt = e['lastAttemptAt'];
+    const errorMessage = e['errorMessage'];
+    if (typeof url !== 'string' || url.length === 0) continue;
+    if (typeof reason !== 'string') continue;
+    if (typeof attemptCount !== 'number') continue;
+    if (typeof lastAttemptAt !== 'string') continue;
+    if (typeof errorMessage !== 'string') continue;
+    out.push({
+      url,
+      reason,
+      attemptCount,
+      lastAttemptAt,
+      errorMessage,
+    });
+  }
+  return { success: true, data: out };
+};
+
+// ============================================================
+//  research:clearFailures
+// ============================================================
+
+/**
+ * Delete the topic's `failures.json` file.
+ *
+ * Called by the renderer when the user dismisses the last failed
+ * URL from the Sources tab's failed-URL banner, or when the user
+ * deletes a candidate and no other failures remain. The file's
+ * absence is the state the UI is moving toward; deleting the
+ * file is what makes the next `research:getFailures` call
+ * return an empty list.
+ *
+ * A file that is already gone is a success — the caller's
+ * intent ("the file should not exist") is satisfied either way.
+ * Any other filesystem error (a permission denial, a directory
+ * sitting in the file's place) is surfaced as an error envelope
+ * so the caller can display a message.
+ */
+const handleClearFailures = async (
+  _event: IpcMainInvokeEvent,
+  topicId: unknown
+): Promise<ApiResponse<null>> => {
+  // ---- Validate ----
+  if (typeof topicId !== 'string' || topicId.trim().length === 0) {
+    return { success: false, error: 'topicId is required.' };
+  }
+
+  // ---- Delete the file ----
+  try {
+    await deleteFileIfExists(getFailuresPath(topicId.trim()));
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: `Could not clear failures: ${message}`,
+    };
+  }
+
+  return { success: true, data: null };
+};
+
+// ============================================================
 //  research:cancel
 // ============================================================
 
@@ -402,6 +843,9 @@ const handleCancel = async (
 export const registerResearchIPC = (): void => {
   ipcMain.handle(CHANNEL_SEARCH, handleSearch);
   ipcMain.handle(CHANNEL_EXTRACT, handleExtract);
+  ipcMain.handle(CHANNEL_GET_CANDIDATES, handleGetCandidates);
+  ipcMain.handle(CHANNEL_GET_FAILURES, handleGetFailures);
+  ipcMain.handle(CHANNEL_CLEAR_FAILURES, handleClearFailures);
   ipcMain.handle(CHANNEL_CANCEL, handleCancel);
 };
 

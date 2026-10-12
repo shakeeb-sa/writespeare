@@ -1,16 +1,19 @@
 /**
  * writerIPC — IPC handlers for the writer feature.
  *
- * Registers the two channels the renderer's
+ * Registers the three channels the renderer's
  * `window.electronAPI.writer.*` methods invoke:
  *
- *   writer:generate  — run the DeepSeek writer for a topic and
- *                      return the created Article.
- *   writer:cancel    — abort an in-flight writer operation.
+ *   writer:generate   — run the DeepSeek writer for a topic and
+ *                       return the created Article.
+ *   writer:getLatest  — read the topic's latest article from the
+ *                       backend, returning `data: null` when the
+ *                       topic has no article yet.
+ *   writer:cancel     — abort an in-flight writer operation.
  *
- * The two channels correspond one-to-one with the two methods
- * the preload declares on `window.electronAPI.writer` — `generate`
- * and `cancel`.
+ * The three channels correspond one-to-one with the three methods
+ * the preload declares on `window.electronAPI.writer` — `generate`,
+ * `getLatest`, and `cancel`.
  *
  * ── What the generate handler does that the service does not ────
  *
@@ -117,7 +120,7 @@ import {
   getWriterTaskId,
 } from '../services/writerService.js';
 import { getByTaskId } from '../../research/services/childProcessManager.js';
-import { apiPost } from '../../shared/api/client.js';
+import { apiGet, apiPost } from '../../shared/api/client.js';
 import type {
   ApiResponse,
   Article,
@@ -127,7 +130,7 @@ import type {
 //  Channel name constants
 // ============================================================
 //
-// The two channel names are declared as constants so a future
+// The three channel names are declared as constants so a future
 // refactor that renames them (or a test that spies on them) has
 // one place to change. The preload's `src/main/preload.ts`
 // declares the same strings on the renderer side of the bridge —
@@ -135,6 +138,7 @@ import type {
 // other.
 
 const CHANNEL_GENERATE = 'writer:generate';
+const CHANNEL_GET_LATEST = 'writer:getLatest';
 const CHANNEL_CANCEL = 'writer:cancel';
 
 // ============================================================
@@ -376,6 +380,101 @@ export const registerWriterIPC = (): void => {
       return {
         success: true,
         data: postResult.data,
+      };
+    }
+  );
+    // ---- writer:getLatest ----
+  //
+  // Read the topic's latest article from the backend. This is
+  // the cold-mount path the Article tab uses on first open of
+  // each topic: a returning visitor sees the previously
+  // generated article without having to regenerate it.
+  //
+  // The handler bridges the backend's two-outcome contract
+  // (200 with an article, 404 when the topic has none) to the
+  // single-outcome envelope the preload declares:
+  // `ApiResponse<Article | null>`. A "no article yet" response
+  // is a legitimate state, not an error — the renderer treats
+  // `data: null` as "show the empty-state prompt". Every other
+  // failure — a network error, a 401 from an expired session,
+  // a 500 from the server — is propagated as an error envelope
+  // so the renderer can surface the message.
+  //
+  // The 404 detection is by message string. The backend's
+  // `articleController.getLatestArticle` responds with the exact
+  // message `'No article found for this topic.'` and no other
+  // response from this endpoint uses it. If a future session
+  // changes the controller's status code or message, this match
+  // must change in the same commit.
+  ipcMain.handle(
+    CHANNEL_GET_LATEST,
+    async (
+      _event: IpcMainInvokeEvent,
+      topicId: unknown
+    ): Promise<ApiResponse<Article | null>> => {
+      // ---- Validate ----
+      // Same guard the other two handlers use: a non-empty
+      // string is required. A trimmed empty value is a caller
+      // bug, not a legitimate "no topic" state.
+      if (
+        typeof topicId !== 'string' ||
+        topicId.trim().length === 0
+      ) {
+        return { success: false, error: 'topicId is required.' };
+      }
+      const trimmedTopicId = topicId.trim();
+
+      // ---- Fetch from the backend ----
+      // The `apiGet` wrapper converts every axios-level failure
+      // into an envelope, so this try/catch is a guard against
+      // a genuinely unexpected throw (a bug in the wrapper, an
+      // out-of-memory condition on a very large response) rather
+      // than the primary error path. Every expected failure —
+      // 404, 401, 500, network — reaches the code below as a
+      // well-formed `result` envelope.
+      let result: ApiResponse<Article>;
+      try {
+        result = await apiGet<Article>(
+          `/articles/topic/${encodeURIComponent(trimmedTopicId)}/latest`
+        );
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : String(err);
+        return {
+          success: false,
+          error: `Could not load the latest article: ${message}`,
+        };
+      }
+
+      // ---- Success path ----
+      // The backend returned a 200 with an article. Pass it
+      // through unchanged; the renderer's store writes it into
+      // the topic's per-topic slot.
+      if (result.success && result.data) {
+        return { success: true, data: result.data };
+      }
+
+      // ---- "No article yet" → success-null ----
+      // The backend returned 404 with the exact message its
+      // `getLatestArticle` controller produces. From the
+      // renderer's perspective this is not an error: the
+      // Article tab shows its empty-state prompt and the user
+      // can generate one. Converting the envelope here keeps
+      // the renderer's loadLatest action free of backend-
+      // specific error-string inspection.
+      if (result.error === 'No article found for this topic.') {
+        return { success: true, data: null };
+      }
+
+      // ---- Every other failure → propagate ----
+      // A 401 (session expired), a 500 (server error), a
+      // network timeout, or any other envelope the backend
+      // produced. The message is forwarded unchanged so the
+      // renderer's store can surface it.
+      return {
+        success: false,
+        error:
+          result.error ?? 'Could not load the latest article.',
       };
     }
   );

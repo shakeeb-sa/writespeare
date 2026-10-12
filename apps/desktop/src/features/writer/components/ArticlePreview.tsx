@@ -198,7 +198,7 @@ const ARTICLE_STATUS_CLASSES: Record<Article['status'], string> = {
  * behind the design choices.
  */
 export const ArticlePreview = ({ topic }: ArticlePreviewProps) => {
-  const { article, isGenerating, regenerate, setArticle } = useWriter();
+  const { article, isGenerating, regenerate, setArticle } = useWriter(topic._id);
   const toast = useToast();
 
   // ---- Local state ----
@@ -254,11 +254,11 @@ export const ArticlePreview = ({ topic }: ArticlePreviewProps) => {
     // non-whitespace characters is a word.
     const matches = trimmed.match(/\S+/g);
     const wordCount = matches === null ? 0 : matches.length;
-    setArticle({ ...article, content: trimmed, wordCount });
+    setArticle(topic._id, { ...article, content: trimmed, wordCount });
     setIsEditing(false);
     setEditedContent('');
     toast.success('Article updated.');
-  }, [article, editedContent, setArticle, toast]);
+  }, [article, editedContent, setArticle, toast, topic._id]);
 
   // ---- Regenerate ----
   const handleRegenerate = useCallback((): void => {

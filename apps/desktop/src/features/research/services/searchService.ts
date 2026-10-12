@@ -56,6 +56,14 @@
  *      and the caller did not opt out of fallback, retry the
  *      whole flow with `--engine duckduckgo` on the same Chrome.
  *
+ *   6. On success, write the final candidate list to the topic's
+ *      `candidates.json` file. The write is a best-effort cache
+ *      step — a failure is logged but does not change the
+ *      result. See the "Persistence" bullet in "What this module
+ *      does NOT do" for the file's shape and purpose.
+ *
+ * Dependencies: Node stdlib + electron + the three sibling
+ *
  * ── The marker-routing design tradeoff ──────────────────────────
  *
  *   `listenerBridge.ts` was written to attach to a raw
@@ -105,10 +113,22 @@
  *     in the order Google or DuckDuckGo ranked it; the renderer's
  *     SourceList renders the list and the user decides.
  *
- *   - It does not persist anything. The result goes back to the
- *     caller and lives in the renderer's store; the backend's
- *     `/api/topics` and `/api/documents` endpoints are what
- *     eventually persist the user's choices.
+ *   - It does not persist to the backend. A successful search
+ *     writes the candidate list to `<topicFolder>/candidates.json`
+ *     so a returning visit to the topic can repopulate the
+ *     Sources tab without re-running the search. The backend's
+ *     `/api/topics` and `/api/documents` endpoints remain the
+ *     persistence layer for the user's topic and document
+ *     records; the `candidates.json` file is a per-topic cache
+ *     that the research feature owns.
+ *
+ *   - It does not write `candidates.json` with more than one
+ *     populated bucket in this session. The current search runs
+ *     one query against one engine and returns one list; all of
+ *     that list lands under the `anytime` bucket, and the other
+ *     three buckets are empty. The bucketed-search feature (PR-3
+ *     of the plan) changes this file to route each per-bucket
+ *     search's result into its own slot.
  *
  * Dependencies: Node stdlib + electron + the three sibling
  * services (`portAllocator` is used indirectly via
@@ -116,6 +136,7 @@
  */
 
 import { app, BrowserWindow } from 'electron';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -164,6 +185,34 @@ export interface SearchCandidate {
    *  `'quora'`, `'medium'`, `'twitter'`, or `'generic'`. */
   platform: string;
 }
+
+/**
+ * The four time-range buckets the bucketed search queries. The
+ * values match the strings the Python search scripts accept on
+ * their `--time-range` argument (see `research/google_search.py`).
+ *
+ * The union is declared here — in the main-process service — so
+ * that the IPC handler (`researchIPC.ts`) and any future
+ * main-process consumer have a single authoritative shape to
+ * reference. The renderer's research store declares its own copy
+ * of the same union because the renderer cannot import from a
+ * main-process module; the two declarations must stay in sync.
+ */
+export type BucketKey = 'anytime' | 'year' | 'month' | 'week';
+
+/**
+ * A topic's candidate list, split by time-range bucket. The
+ * shape is what `candidates.json` carries on disk and what the
+ * `research:getCandidates` IPC channel returns to the renderer.
+ *
+ * Every bucket key is present; a bucket the search has not yet
+ * run holds an empty array. The current session (before PR-3
+ * ships the bucketed-search feature) writes the entire candidate
+ * list under `anytime` and leaves the other three buckets empty.
+ * PR-3 changes the write to route each per-bucket search's
+ * result into its own slot.
+ */
+export type CandidatesByBucket = Record<BucketKey, SearchCandidate[]>;
 
 /**
  * The classification of a search's outcome.
@@ -274,6 +323,29 @@ const EXIT_STOPPED = 100;
 /** The exit code for "auto-skipped because captcha policy was
  *  'skip'" (`EXIT_CAPTCHA_SKIP`). */
 const EXIT_CAPTCHA_SKIP = 101;
+
+// ---- On-disk layout ----
+//
+// The topic folder convention. Same values every other main-process
+// module that touches the topic folder uses (`writerIPC.ts`,
+// `validationIPC.ts`, `documentService.ts`). Duplicated across
+// files because the convention is a cross-file contract and the
+// plan's tree declares no shared layout module for the desktop
+// main process. A change here must be reflected in the sibling
+// files and on the Python side in the same commit.
+
+/** The app slug used as the top-level folder under the user's
+ *  application-data directory. Must match the Electron side's
+ *  `main/store.ts` slug and the Python side's
+ *  `core/file_io._APP_SLUG`. */
+const APP_SLUG = 'writespeare';
+
+/** The subfolder under the app slug that holds every topic. */
+const TOPICS_SUBFOLDER = 'topics';
+
+/** The filename of the per-topic candidate list, written by
+ *  `writeCandidatesFile` after a successful search. */
+const CANDIDATES_FILE = 'candidates.json';
 
 // =============================================================================
 //  Helpers
@@ -399,6 +471,65 @@ const extractCandidates = (payload: unknown): SearchCandidate[] => {
     result.push({ url, title, snippet, platform });
   }
   return result;
+};
+
+/**
+ * Return the absolute path to a topic's `candidates.json` file.
+ *
+ * The path is `<appData>/writespeare/topics/<topicId>/candidates.json`.
+ * Same folder convention every other main-process module uses;
+ * see the layout constants above for the duplication rationale.
+ */
+const getCandidatesPath = (topicId: string): string => {
+  return path.join(
+    app.getPath('appData'),
+    APP_SLUG,
+    TOPICS_SUBFOLDER,
+    topicId,
+    CANDIDATES_FILE
+  );
+};
+
+/**
+ * Write the candidate list to the topic's `candidates.json` file
+ * in the `CandidatesByBucket` shape.
+ *
+ * The file is the persistence layer for the Sources tab: without
+ * it, a returning visit to the topic would show an empty
+ * candidate list even though the search had run. The
+ * `research:getCandidates` IPC channel reads this file and
+ * returns its contents to the renderer's `loadCandidates` action.
+ *
+ * In this session, all candidates land under the `anytime`
+ * bucket and the other three buckets are empty — the bucketed
+ * search does not exist yet. PR-3 of the plan changes this
+ * helper to write into the bucket the search ran against.
+ *
+ * The parent directory is created recursively before the write
+ * so the first search on a fresh topic succeeds without a
+ * separate folder-creation step. A failure to write is
+ * propagated to the caller, which logs it and continues — see
+ * `runSearch`'s tail for the caller's policy.
+ */
+const writeCandidatesFile = async (
+  topicId: string,
+  candidates: SearchCandidate[]
+): Promise<void> => {
+  const candidatesPath = getCandidatesPath(topicId);
+  await fs.mkdir(path.dirname(candidatesPath), { recursive: true });
+
+  const record: CandidatesByBucket = {
+    anytime: candidates,
+    year: [],
+    month: [],
+    week: [],
+  };
+
+  await fs.writeFile(
+    candidatesPath,
+    JSON.stringify(record, null, 2),
+    'utf-8'
+  );
 };
 
 /**
@@ -679,12 +810,9 @@ export const runSearch = async (
     port
   );
 
-  if (primaryResult.kind === 'success') {
-    return primaryResult;
-  }
-
   // ---- Decide whether to fall back ----
   // Fallback is skipped when any of the following holds:
+  //   * the primary engine succeeded
   //   * the caller explicitly disabled it
   //   * the primary engine was not Google (nothing to fall back to)
   //   * the user already terminated the operation (skip / stop)
@@ -692,33 +820,58 @@ export const runSearch = async (
   // The last case matters because a fallback would ignore the
   // user's intent: they clicked Skip, and the service must not
   // silently spawn a second engine.
-  if (options.fallbackToDuckDuckGo === false) {
-    return primaryResult;
-  }
-  if (primaryEngine !== 'google') {
-    return primaryResult;
-  }
+  //
+  // The whole decision is collapsed into a single `finalResult`
+  // variable so that the success path has one place to write the
+  // candidates file and one place to return. The alternative —
+  // writing at each of the original four return points — would
+  // duplicate the write call and let future edits forget one of
+  // them.
+  let finalResult: SearchServiceResult = primaryResult;
   if (
-    primaryResult.kind === 'user-skip' ||
-    primaryResult.kind === 'user-stop'
+    primaryResult.kind !== 'success' &&
+    options.fallbackToDuckDuckGo !== false &&
+    primaryEngine === 'google' &&
+    primaryResult.kind !== 'user-skip' &&
+    primaryResult.kind !== 'user-stop'
   ) {
-    return primaryResult;
+    console.log(
+      `[searchService] Primary search failed (${primaryResult.kind}: ` +
+        `${primaryResult.error ?? 'no error message'}). ` +
+        `Falling back to DuckDuckGo.`
+    );
+
+    finalResult = await attemptSearch(
+      options,
+      FALLBACK_ENGINE,
+      port
+    );
   }
 
-  // ---- Fall back to DuckDuckGo ----
-  console.log(
-    `[searchService] Primary search failed (${primaryResult.kind}: ` +
-      `${primaryResult.error ?? 'no error message'}). ` +
-      `Falling back to DuckDuckGo.`
-  );
+  // ---- Persist candidates on success ----
+  // A successful search writes the candidate list to the topic's
+  // `candidates.json` file so that a subsequent open of the topic
+  // can repopulate the Sources tab without re-running the search.
+  //
+  // A write failure is logged but does NOT change the result. The
+  // search itself succeeded; the renderer's SourceList shows the
+  // candidates that arrived via the marker stream regardless of
+  // whether they were persisted. A disk-full or permission-denied
+  // failure would cost the persistence but not the operation, and
+  // the correct response is to let the user see the results and
+  // move on.
+  if (finalResult.kind === 'success') {
+    try {
+      await writeCandidatesFile(options.topicId, finalResult.candidates);
+    } catch (err) {
+      console.error(
+        '[searchService] could not write candidates.json:',
+        err
+      );
+    }
+  }
 
-  const fallbackResult = await attemptSearch(
-    options,
-    FALLBACK_ENGINE,
-    port
-  );
-
-  return fallbackResult;
+  return finalResult;
 };
 
 // =============================================================================
