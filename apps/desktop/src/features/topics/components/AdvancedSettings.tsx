@@ -2,11 +2,16 @@
  * WriteSpeare — advanced settings section.
  *
  * The collapsible "Advanced Settings" section rendered inside the
- * New Topic modal. Three fields, all optional-in-practice — a
+ * New Topic modal. Two fields, both optional-in-practice — a
  * beginner never opens the section and the modal's form submits
  * with the defaults; a power user expands it to override the
- * prompt template, the word-count target, or the source-count
- * target for this one topic.
+ * prompt template or the word-count target for this one topic.
+ *
+ * The source-count field that this component used to carry is
+ * gone. It has been superseded by the Search Distribution
+ * section that the modal renders above this one; the four-bucket
+ * layout in that section is now the single count-related concept
+ * on a topic (per the C2 decision).
  *
  * The section is a disclosure — a button with `aria-expanded`
  * that toggles the visibility of a panel below it. It is closed
@@ -14,31 +19,29 @@
  * point of a disclosure: the default path is the common path, and
  * the advanced path is behind one deliberate click.
  *
- * The three fields:
+ * The two fields:
  *
- *   Prompt file — a text input. The name of the Jinja2 template
- *     the writer step renders into the DeepSeek prompt. The
- *     default is `default.md`, matching the backend schema's
- *     default for the field. The user can override it to any
- *     filename; the writer script loads the template by name
- *     from the prompts folder, and a name that does not resolve
- *     to a file produces a clear error at generation time. A
- *     closed dropdown of the three built-in templates was
- *     considered and rejected — see "Why the prompt field is a
- *     text input" below.
+ *   Prompt file — a dropdown, with a fallback text input. The
+ *     name of the Jinja2 template the writer step renders into
+ *     the DeepSeek prompt. The dropdown is populated from the
+ *     `usePrompts` hook — the built-in templates that ship with
+ *     the app plus the user's own templates from the user
+ *     prompts folder. The default is `default.md`, matching the
+ *     backend schema's default for the field. When the current
+ *     filename is not in the offered list — a custom template
+ *     the user has named but not yet saved, or a template that
+ *     was removed from the prompts folder — a text input
+ *     appears beneath the dropdown so the user can enter or
+ *     edit the name directly.
  *
  *   Word count — a numeric input, bounded [100, 10000]. The
  *     target length of the generated article. Clamped on blur.
  *
- *   Source count — a numeric input, bounded [1, 50]. The target
- *     number of source documents the pipeline fetches for this
- *     topic. Clamped on blur.
- *
  * The numeric bounds come from the shared constants module,
  * which mirrors the backend schema's `min` and `max` validators
- * on the same two fields. The constants are the single source of
- * truth for the client-side bounds; a future change to the
- * bounds is a one-line edit in that module.
+ * on the `wordCount` field. The constants are the single source
+ * of truth for the client-side bound; a future change to the
+ * bound is a one-line edit in that module.
  *
  * Clamping on blur, not on change — why:
  *
@@ -120,34 +123,43 @@
  *   effect updates the local raw string to match. This is the
  *   standard "controlled component with local buffer" pattern.
  *
- * Why the prompt field is a text input and not a dropdown:
+ * Why the prompt field is a dropdown with a text-input fallback:
  *
- *   The plan's user-journey mockup shows the prompt field as a
- *   dropdown with a chevron, implying a fixed list. But the plan
- *   declares no constants module for prompt file names, no IPC
- *   channel to enumerate the prompts folder, and no shared type
- *   for the set of valid prompt files. The three built-in
- *   templates (`default.md`, `seo-focused.md`,
- *   `conversational.md`) live under
- *   `apps/desktop/src/resources/scripts/prompts/` — a folder
- *   that the renderer has no way to read.
+ *   The user journey describes the prompt field as a dropdown,
+ *   and the `prompts:list` IPC channel (registered by
+ *   `promptsIPC.ts`) is what makes a dropdown possible: the
+ *   renderer can now enumerate the built-in templates shipped
+ *   with the app and the user's own templates from the user
+ *   prompts folder.
  *
- *   A dropdown would therefore require hard-coding the three
- *   filenames in this file. That hard-coded list would drift the
- *   moment a session added a fourth prompt template, and the
- *   user journey's Stage 9 explicitly describes a user writing
- *   their own custom template (say, `my-style.md`) — a file that
- *   a hard-coded dropdown could not offer. A text input accepts
- *   any filename, defers validation to the writer step (which
- *   produces a clear "template not found" error), and requires
- *   no maintenance when the set of available templates changes.
+ *   The dropdown alone would not be sufficient, because the
+ *   `promptFile` value on a topic can legitimately name a file
+ *   that does not exist yet. The two cases:
  *
- *   If a future session adds an IPC channel to list prompt files
- *   — say, `settings:listPrompts` — the correct change is to
- *   switch this field to a `<select>` populated from that
- *   channel's result, at which point the list is dynamic and the
- *   concern that motivated the text input here is resolved. That
- *   change is not in scope for the current session.
+ *     1. A user who has just typed a filename in the modal but
+ *        has not yet created the file (a future session's "Save
+ *        as new prompt" affordance, or a hand-authored file the
+ *        user intends to drop into the prompts folder).
+ *
+ *     2. A user whose previously-saved template was deleted from
+ *        the prompts folder between when the topic was created
+ *        and when this modal was opened.
+ *
+ *   In both cases the value is real — it is what the user wants
+ *   the topic to use — but it is not in the list the dropdown can
+ *   offer. Showing the dropdown alone would force the value to
+ *   snap to an unrelated entry.
+ *
+ *   The component therefore renders the dropdown AND, when the
+ *   current value is not one of the offered options, a text
+ *   input beneath it. The dropdown carries an extra "Custom
+ *   filename…" entry that switches the component into that mode
+ *   explicitly, so the user can start typing a name that does
+ *   not yet exist. A value the user types that happens to match
+ *   an offered option (a hand-typed `default.md`) collapses the
+ *   component back to the plain-dropdown form — the same
+ *   auto-completion behaviour that a text input paired with a
+ *   suggestion list produces.
  *
  * What this component does NOT do:
  *
@@ -156,9 +168,12 @@
  *     reports changes through `onChange`. See the file header
  *     above for the change/blur semantics.
  *
- *   - It does not validate the prompt file name against a list.
- *     See "Why the prompt field is a text input" for the
- *     rationale.
+ *   - It does not validate the prompt file name against the
+ *     list of saved templates. A value that does not match any
+ *     entry is a legitimate state — see "Why the prompt field
+ *     is a dropdown with a text-input fallback" above. The
+ *     writer step is the layer that fails cleanly if the file
+ *     does not exist when a run starts.
  *
  *   - It does not implement expand/collapse persistence. The
  *     section opens closed on every mount, which is the correct
@@ -169,20 +184,21 @@
  *
  *   - It does not render the whole modal. It is one section of
  *     the form; the modal composes this section with the title,
- *     keywords, preset picker, and profile fields.
+ *     keywords, preset picker, profile, and search distribution
+ *     sections.
  */
 
 import {
   useEffect,
+  useMemo,
   useState,
   type ChangeEvent,
 } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
+import { usePrompts } from '../../writer/hooks/usePrompts.js';
 import {
-  MAX_SOURCES,
   MAX_WORDS,
-  MIN_SOURCES,
   MIN_WORDS,
 } from '../../shared/constants/index.js';
 
@@ -207,9 +223,6 @@ interface AdvancedSettingsValues {
 
   /** The target length of the generated article, in words. */
   wordCount: number;
-
-  /** The target number of source documents the pipeline fetches. */
-  sourceCount: number;
 }
 
 /**
@@ -221,7 +234,6 @@ interface AdvancedSettingsValues {
 interface AdvancedSettingsPatch {
   promptFile?: string;
   wordCount?: number;
-  sourceCount?: number;
 }
 
 /**
@@ -251,6 +263,27 @@ export interface AdvancedSettingsProps {
 // ============================================================
 //  Helpers
 // ============================================================
+
+
+/**
+ * The sentinel value the prompt-file dropdown uses to represent
+ * the "the current value is not one of the offered options, show
+ * the fallback text input" state.
+ *
+ * The value is deliberately a string that cannot be a valid
+ * prompt filename — the `promptsIPC` layer's `isValidPromptName`
+ * helper rejects any name starting with a dot, and the
+ * `listPromptNames` reader in the same module filters dotfiles
+ * out of the folder listing. A user template named `.custom`
+ * therefore cannot exist, so no collision between a real
+ * filename and the sentinel is possible.
+ *
+ * The double-underscore prefix also matches the codebase's
+ * convention for internal marker values (`_handleMarker` on the
+ * Zustand stores, the `__v` field Mongoose adds), which makes
+ * the sentinel read as internal rather than as a filename.
+ */
+const CUSTOM_PROMPT_SENTINEL = '.custom';
 
 /**
  * Parse a user-typed string into a bounded integer, or return
@@ -326,9 +359,33 @@ export const AdvancedSettings = ({
   const [wordCountRaw, setWordCountRaw] = useState(
     String(values.wordCount)
   );
-  const [sourceCountRaw, setSourceCountRaw] = useState(
-    String(values.sourceCount)
+
+  // ---- Prompt list from the prompts IPC layer ----
+  // The dropdown's options come from this hook. The hook is a
+  // passive reader — see the "fetch on mount" effect below for
+  // what triggers the initial list load. See the file header's
+  // "Why the prompt field is a dropdown with a text-input
+  // fallback" section for the reasoning on why the fallback
+  // exists.
+  const { builtinPrompts, userPrompts, refresh: refreshPrompts } =
+    usePrompts();
+
+  // The merged, deduped list of every prompt name the dropdown
+  // can offer. A user template with the same filename as a
+  // built-in shadows it on disk; the dropdown shows the name
+  // once, and the shadowing rule is what the writer step
+  // applies when it resolves the file.
+  const availablePrompts = useMemo(
+    () => Array.from(new Set([...builtinPrompts, ...userPrompts])),
+    [builtinPrompts, userPrompts]
   );
+
+  // Whether the component is in "custom filename" entry mode.
+  // True when the user has explicitly picked the "Custom
+  // filename…" option from the dropdown, or when the current
+  // value is not in the offered list. See the file header for
+  // the full reasoning.
+  const [isCustomEntry, setIsCustomEntry] = useState(false);
 
   // ---- Sync numeric buffers from the parent ----
   //
@@ -350,9 +407,34 @@ export const AdvancedSettings = ({
     setWordCountRaw(String(values.wordCount));
   }, [values.wordCount]);
 
+  // ---- Fetch the prompt list on mount ----
+  // The `usePrompts` hook is a passive reader; this effect is
+  // what triggers the initial list fetch. The `refresh`
+  // reference is stable (a `useCallback` from the hook), so the
+  // effect fires exactly once per mount.
   useEffect(() => {
-    setSourceCountRaw(String(values.sourceCount));
-  }, [values.sourceCount]);
+    void refreshPrompts();
+  }, [refreshPrompts]);
+
+  // ---- Sync custom-entry mode when the value changes ----
+  // When the parent's `promptFile` value changes — the modal
+  // resets its form on open, or the user picks a known prompt
+  // from the dropdown — the component exits custom-entry mode
+  // if the new value is in the offered list. When the new value
+  // is not in the list, custom-entry mode stays on (the user is
+  // mid-typing a custom name).
+  //
+  // The effect deliberately does NOT force custom-entry mode ON
+  // when the value is unknown: a user who just picked a known
+  // prompt should stay in dropdown mode until the file actually
+  // changes. The select's `value` derivation below handles the
+  // "unknown value, not in custom mode" case by showing the
+  // sentinel anyway.
+  useEffect(() => {
+    if (availablePrompts.includes(values.promptFile)) {
+      setIsCustomEntry(false);
+    }
+  }, [values.promptFile, availablePrompts]);
 
   // ---- Disclosure toggle ----
   const toggleExpanded = (): void => {
@@ -369,6 +451,41 @@ export const AdvancedSettings = ({
     event: ChangeEvent<HTMLInputElement>
   ): void => {
     onChange({ promptFile: event.target.value });
+  };
+
+  
+  // ---- Prompt select change ----
+  //
+  // The dropdown's change handler. Two branches:
+  //
+  //   * The sentinel — the user explicitly chose the "Custom
+  //     filename…" entry, so the component enters custom-entry
+  //     mode without changing the parent's value. The fallback
+  //     text input appears beneath the dropdown with the
+  //     current value pre-filled.
+  //
+  //   * A known prompt name — the user picked a real template,
+  //     so the parent's value is updated and custom-entry mode
+  //     is cleared.
+  //
+  // The sentinel branch deliberately leaves the parent's value
+  // untouched. A user who picks "Custom filename…" from a
+  // dropdown that was showing `default.md` has not yet said what
+  // the new name should be; writing a placeholder to the parent
+  // would send the placeholder to the backend if the user
+  // submitted before typing. Leaving the value alone means the
+  // worst case is a submit with the previous value, which is a
+  // state the user can see and correct.
+  const handlePromptSelectChange = (
+    event: ChangeEvent<HTMLSelectElement>
+  ): void => {
+    const value = event.target.value;
+    if (value === CUSTOM_PROMPT_SENTINEL) {
+      setIsCustomEntry(true);
+      return;
+    }
+    setIsCustomEntry(false);
+    onChange({ promptFile: value });
   };
 
   // ---- Word count change ----
@@ -423,50 +540,27 @@ export const AdvancedSettings = ({
     }
   };
 
-  // ---- Source count change ----
+  
+  // ---- Derived dropdown state ----
   //
-  // Mirrors `handleWordCountChange` exactly. The two handlers
-  // are not factored into a shared parameterised function
-  // because the codebase's convention is that two inline
-  // handlers with the same shape but different field names read
-  // more clearly at the call site than one shared handler
-  // threaded with a key argument.
-  const handleSourceCountChange = (
-    event: ChangeEvent<HTMLInputElement>
-  ): void => {
-    const raw = event.target.value;
-    setSourceCountRaw(raw);
-    const parsed = parseBoundedInt(
-      raw,
-      Number.MIN_SAFE_INTEGER,
-      Number.MAX_SAFE_INTEGER
-    );
-    if (parsed === null) {
-      return;
-    }
-    onChange({ sourceCount: parsed });
-  };
+  // `isKnownPrompt` is true when the current value is one of the
+  // offered options. `showCustomInput` is true when the fallback
+  // text input should render — either because the user entered
+  // custom mode explicitly, or because the current value is not
+  // in the list (so the dropdown alone could not display it
+  // correctly).
+  //
+  // `selectValue` is what the `<select>` element's `value` prop
+  // is bound to. When the fallback is shown, the select shows
+  // the sentinel entry; otherwise it shows the current value,
+  // which is guaranteed to match an option because
+  // `isKnownPrompt` is true.
+  const isKnownPrompt = availablePrompts.includes(values.promptFile);
+  const showCustomInput = isCustomEntry || !isKnownPrompt;
+  const selectValue = showCustomInput
+    ? CUSTOM_PROMPT_SENTINEL
+    : values.promptFile;
 
-  // ---- Source count blur ----
-  const handleSourceCountBlur = (): void => {
-    const parsed = parseBoundedInt(
-      sourceCountRaw,
-      Number.MIN_SAFE_INTEGER,
-      Number.MAX_SAFE_INTEGER
-    );
-    if (parsed === null) {
-      setSourceCountRaw(String(values.sourceCount));
-      return;
-    }
-    const clamped = Math.min(
-      Math.max(parsed, MIN_SOURCES),
-      MAX_SOURCES
-    );
-    setSourceCountRaw(String(clamped));
-    if (clamped !== values.sourceCount) {
-      onChange({ sourceCount: clamped });
-    }
-  };
 
   // ---- Render ----
   return (
@@ -520,22 +614,47 @@ export const AdvancedSettings = ({
             >
               Prompt file
             </label>
-            <input
+            <select
               id="advanced-prompt-file"
-              type="text"
-              value={values.promptFile}
-              onChange={handlePromptFileChange}
+              value={selectValue}
+              onChange={handlePromptSelectChange}
               disabled={disabled}
-              placeholder="default.md"
               className={
                 'w-full rounded-lg border border-neutral-300 ' +
                 'bg-background px-3 py-2 text-sm text-text ' +
-                'placeholder-neutral-400 focus:border-primary ' +
+                'focus:border-primary ' +
                 'disabled:cursor-not-allowed disabled:opacity-60 ' +
                 'dark:border-neutral-700 dark:bg-neutral-950 ' +
-                'dark:text-neutral-100 dark:placeholder-neutral-500'
+                'dark:text-neutral-100'
               }
-            />
+            >
+              {availablePrompts.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+              <option value={CUSTOM_PROMPT_SENTINEL}>
+                Custom filename…
+              </option>
+            </select>
+            {showCustomInput && (
+              <input
+                id="advanced-prompt-file-custom"
+                type="text"
+                value={values.promptFile}
+                onChange={handlePromptFileChange}
+                disabled={disabled}
+                placeholder="my-style.md"
+                className={
+                  'mt-2 w-full rounded-lg border border-neutral-300 ' +
+                  'bg-background px-3 py-2 text-sm text-text ' +
+                  'placeholder-neutral-400 focus:border-primary ' +
+                  'disabled:cursor-not-allowed disabled:opacity-60 ' +
+                  'dark:border-neutral-700 dark:bg-neutral-950 ' +
+                  'dark:text-neutral-100 dark:placeholder-neutral-500'
+                }
+              />
+            )}
             <p
               className={
                 'mt-1 text-xs text-neutral-500 ' +
@@ -547,87 +666,45 @@ export const AdvancedSettings = ({
             </p>
           </div>
 
-          {/* ---- Word count + source count ---- */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label
-                htmlFor="advanced-word-count"
-                className={
-                  'mb-1.5 block text-sm font-medium ' +
-                  'text-text dark:text-neutral-200'
-                }
-              >
-                Word count
-              </label>
-              <input
-                id="advanced-word-count"
-                type="number"
-                inputMode="numeric"
-                min={MIN_WORDS}
-                max={MAX_WORDS}
-                step={100}
-                value={wordCountRaw}
-                onChange={handleWordCountChange}
-                onBlur={handleWordCountBlur}
-                disabled={disabled}
-                className={
-                  'w-full rounded-lg border border-neutral-300 ' +
-                  'bg-background px-3 py-2 text-sm text-text ' +
-                  'focus:border-primary ' +
-                  'disabled:cursor-not-allowed disabled:opacity-60 ' +
-                  'dark:border-neutral-700 dark:bg-neutral-950 ' +
-                  'dark:text-neutral-100'
-                }
-              />
-              <p
-                className={
-                  'mt-1 text-xs text-neutral-500 ' +
-                  'dark:text-neutral-400'
-                }
-              >
-                {MIN_WORDS}–{MAX_WORDS.toLocaleString()}
-              </p>
-            </div>
-
-            <div>
-              <label
-                htmlFor="advanced-source-count"
-                className={
-                  'mb-1.5 block text-sm font-medium ' +
-                  'text-text dark:text-neutral-200'
-                }
-              >
-                Source count
-              </label>
-              <input
-                id="advanced-source-count"
-                type="number"
-                inputMode="numeric"
-                min={MIN_SOURCES}
-                max={MAX_SOURCES}
-                step={1}
-                value={sourceCountRaw}
-                onChange={handleSourceCountChange}
-                onBlur={handleSourceCountBlur}
-                disabled={disabled}
-                className={
-                  'w-full rounded-lg border border-neutral-300 ' +
-                  'bg-background px-3 py-2 text-sm text-text ' +
-                  'focus:border-primary ' +
-                  'disabled:cursor-not-allowed disabled:opacity-60 ' +
-                  'dark:border-neutral-700 dark:bg-neutral-950 ' +
-                  'dark:text-neutral-100'
-                }
-              />
-              <p
-                className={
-                  'mt-1 text-xs text-neutral-500 ' +
-                  'dark:text-neutral-400'
-                }
-              >
-                {MIN_SOURCES}–{MAX_SOURCES}
-              </p>
-            </div>
+          {/* ---- Word count ---- */}
+          <div>
+            <label
+              htmlFor="advanced-word-count"
+              className={
+                'mb-1.5 block text-sm font-medium ' +
+                'text-text dark:text-neutral-200'
+              }
+            >
+              Word count
+            </label>
+            <input
+              id="advanced-word-count"
+              type="number"
+              inputMode="numeric"
+              min={MIN_WORDS}
+              max={MAX_WORDS}
+              step={100}
+              value={wordCountRaw}
+              onChange={handleWordCountChange}
+              onBlur={handleWordCountBlur}
+              disabled={disabled}
+              className={
+                'w-full rounded-lg border border-neutral-300 ' +
+                'bg-background px-3 py-2 text-sm text-text ' +
+                'focus:border-primary ' +
+                'disabled:cursor-not-allowed disabled:opacity-60 ' +
+                'dark:border-neutral-700 dark:bg-neutral-950 ' +
+                'dark:text-neutral-100'
+              }
+            />
+            <p
+              className={
+                'mt-1 text-xs text-neutral-500 ' +
+                'dark:text-neutral-400'
+              }
+            >
+              {MIN_WORDS}–{MAX_WORDS.toLocaleString()}
+            </p>
           </div>
         </div>
       )}

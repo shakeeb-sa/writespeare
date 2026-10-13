@@ -3,8 +3,8 @@
  *
  * Renders a single search result as a selectable list item. Every
  * candidate produced by the search — regardless of engine, platform,
- * or content — has the same four pieces of information the row can
- * show:
+ * or content — has the same four pieces of candidate information
+ * the row can show:
  *
  *   url        the source page's absolute URL
  *   title      the page's title, as displayed on the SERP
@@ -12,7 +12,22 @@
  *   platform   a slug identifying the site — 'reddit', 'quora',
  *              'medium', 'twitter', or 'generic'
  *
- * And the row renders those four pieces in one consistent layout:
+ * Plus two pieces of pipeline state the parent supplies:
+ *
+ *   rangeCount the number of time-range buckets this URL was found
+ *              in. A value greater than 1 renders a "found in N
+ *              ranges" badge next to the platform badge,
+ *              preserving the signal that the URL was deduplicated
+ *              from multiple buckets (per the Q8.6 decision).
+ *   failure    the URL's last extraction failure record, or null
+ *              when the extraction succeeded or has not yet been
+ *              attempted. A non-null value switches the row into
+ *              its failed visual state — a red border, a
+ *              red-tinted background, a reason tooltip on hover,
+ *              and a retry icon button in the action group (per
+ *              the Q2.2 and Q2.3 decisions).
+ *
+ * And the row renders those pieces in one consistent layout:
  *
  *   ┌──────────────────────────────────────────────────────────┐
  *   │ ☑  [reddit]  How to garden in a tiny apartment     ↗    │
@@ -100,6 +115,55 @@
  *   transition into and out of the disabled state reads as a single
  *   unit rather than as several small changes to the checkbox, the
  *   link, and the text.
+ * 
+ * 
+ * ── The failed state ────────────────────────────────────────────
+ *
+ *   A row whose `failure` prop is non-null renders in the failed
+ *   visual state. Three visual changes and one behavioral one:
+ *
+ *     1. The row's border and background tint switch to red. The
+ *        red treatment takes precedence over the selected tint —
+ *        a failed candidate can still be selected, but the
+ *        failure is the more urgent signal, and the selected
+ *        state remains available in the checkbox.
+ *
+ *     2. The row's `title` attribute (the browser's native
+ *        tooltip) carries the failure reason. Hovering the row
+ *        surfaces the message without the user having to open a
+ *        modal or navigate away. Inner elements with their own
+ *        `title` attributes (the candidate title paragraph, the
+ *        URL display line, the external-link button) keep their
+ *        own tooltips when hovered directly; the failure reason
+ *        shows on the row's remaining area.
+ *
+ *     3. A retry icon button appears in the action group, next to
+ *        the external-link button. Clicking it calls the
+ *        `onRetry` callback with the candidate's URL. The same
+ *        `stopPropagation` pattern the external-link button uses
+ *        keeps the row's toggle from firing on a retry click.
+ *
+ *   The row does NOT block the failed candidate's other
+ *   interactions. A user can still toggle its checkbox (a failed
+ *   URL that has since been manually re-fetched, or one the user
+ *   wants to skip on the next batch), and can still click the
+ *   external-link button to look at the source page. The failure
+ *   state is a signal, not a lock.
+ *
+ * ── The multi-range badge ───────────────────────────────────────
+ *
+ *   A row whose `rangeCount` is greater than 1 renders a small
+ *   "N ranges" badge next to the platform badge. The badge
+ *   preserves the signal that the URL appeared in multiple
+ *   time-range buckets and was deduplicated by the store — see
+ *   the Q8.6 decision. A URL found by four buckets is a stronger
+ *   source than one found by one, and the badge lets the user see
+ *   that without the row appearing four times in the list.
+ *
+ *   The badge does not appear when `rangeCount` is 1 or less. A
+ *   value of 1 is the default — the URL was found by exactly one
+ *   bucket — and rendering a "1 range" badge for every row would
+ *   be noise.
  *
  * ── What this component does NOT do ────────────────────────────
  *
@@ -117,6 +181,13 @@
  *     for a user who wants to look at the source in a real browser
  *     before deciding whether to include it.
  *
+ *   - It does not own the failure state. The parent (`SourceList`)
+ *     holds the failed-URL records and decides what a retry click
+ *     does — typically a call into the research store's
+ *     `retryFailed` action. This component reads the `failure`
+ *     prop, renders the failed visual state, and reports the
+ *     retry intent through the `onRetry` callback; it never
+ *     mutates anything.
  *   - It does not render a favicon, a per-platform icon, or any
  *     image. The platform is surfaced as a text badge in the design
  *     system's neutral palette; a site icon (fetched from a
@@ -128,9 +199,12 @@
  */
 
 import { useCallback, type MouseEvent } from 'react';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, RotateCcw } from 'lucide-react';
 
-import type { SearchCandidate } from '../store/researchStore.js';
+import type {
+  FailedUrlRecord,
+  SearchCandidate,
+} from '../store/researchStore.js';
 
 // ============================================================
 //  Public types
@@ -165,6 +239,27 @@ export interface SourceCandidateProps {
    *  off; the parent interprets the current state from its own
    *  Set. */
   onToggle: (url: string) => void;
+
+  /** The number of time-range buckets this URL was found in. A
+   *  value greater than 1 renders the "found in N ranges" badge
+   *  next to the platform badge. A value of 1 — the default the
+   *  parent supplies when the URL was found by exactly one
+   *  bucket — renders no badge. */
+  rangeCount: number;
+
+  /** The URL's last extraction failure record, or null when the
+   *  extraction succeeded, has not been attempted, or the
+   *  failure record is not available. A non-null value switches
+   *  the row into its failed visual state — see the file
+   *  header's "The failed state" section. */
+  failure: FailedUrlRecord | null;
+
+  /** Called when the user clicks the retry icon button on a
+   *  failed row. The argument is the candidate's URL — the same
+   *  key the parent's failed-URL record uses. The callback is
+   *  never invoked on a non-failed row because the retry button
+   *  is not rendered. */
+  onRetry: (url: string) => void;
 }
 
 // ============================================================
@@ -291,6 +386,9 @@ export const SourceCandidate = ({
   selected,
   disabled,
   onToggle,
+  rangeCount,
+  failure,
+  onRetry,
 }: SourceCandidateProps) => {
   // ---- Toggle the selection ----
   // Called by the row's click handler and by the checkbox's own
@@ -338,12 +436,47 @@ export const SourceCandidate = ({
     [disabled, candidate.url]
   );
 
+  
+  // ---- Retry click ----
+  // Opens the retry flow for a failed row. The `stopPropagation`
+  // prevents the row's click handler from also firing — the user
+  // wanted to RETRY the extraction, not to toggle the row's
+  // selection. Same pattern as the external-link button above.
+  const handleRetryClick = useCallback(
+    (event: MouseEvent<HTMLButtonElement>): void => {
+      event.stopPropagation();
+      if (disabled) return;
+      onRetry(candidate.url);
+    },
+    [disabled, onRetry, candidate.url]
+  );
+
   // ---- Derived display values ----
   const platformLabel =
     PLATFORM_LABELS[candidate.platform] ?? candidate.platform;
   const platformClass =
     PLATFORM_CLASSES[candidate.platform] ?? FALLBACK_BADGE_CLASS;
   const displayUrl = shortenUrl(candidate.url);
+
+  // Whether the row renders in its failed visual state. See the
+  // file header's "The failed state" section for the full set of
+  // effects this flag drives.
+  const isFailed = failure !== null;
+
+  // Whether the row renders its multi-range badge. A `rangeCount`
+  // of 1 (or less, which cannot occur but is defended against
+  // here) is the default state and renders no badge. See the file
+  // header's "The multi-range badge" section.
+  const showRangeBadge = rangeCount > 1;
+
+  // The row's native tooltip. When the row is failed, the
+  // tooltip carries the failure reason so a user who wonders why
+  // the row is red can read the message without opening a modal.
+  // A non-failed row has no tooltip at this level — the inner
+  // elements' own `title` attributes serve their own purposes.
+  const rowTitle = isFailed
+    ? `Extraction failed: ${failure.reason}`
+    : undefined;
 
   return (
     <div
@@ -352,19 +485,24 @@ export const SourceCandidate = ({
       aria-disabled={disabled}
       tabIndex={disabled ? -1 : 0}
       onClick={handleRowClick}
+      title={rowTitle}
       className={
         'flex cursor-pointer gap-3 rounded-xl border p-3 ' +
         'transition-colors ' +
         (disabled
           ? 'cursor-not-allowed opacity-60 '
           : '') +
-        (selected
-          ? 'border-primary bg-primary/5 ' +
-            'dark:border-primary-light dark:bg-primary-light/5 '
-          : 'border-neutral-200 bg-background ' +
-            'hover:border-neutral-300 hover:bg-neutral-50 ' +
-            'dark:border-neutral-800 dark:hover:border-neutral-700 ' +
-            'dark:hover:bg-neutral-800/40')
+        (isFailed
+          ? 'border-red-300 bg-red-50 ' +
+            'dark:border-red-900 dark:bg-red-950/40 '
+          : selected
+            ? 'border-primary bg-primary/5 ' +
+              'dark:border-primary-light dark:bg-primary-light/5 '
+            : 'border-neutral-200 bg-background ' +
+              'hover:border-neutral-300 hover:bg-neutral-50 ' +
+              'dark:border-neutral-800 ' +
+              'dark:hover:border-neutral-700 ' +
+              'dark:hover:bg-neutral-800/40')
       }
     >
       {/* ---- Checkbox ---- */}
@@ -401,7 +539,7 @@ export const SourceCandidate = ({
 
       {/* ---- Content ---- */}
       <div className="min-w-0 flex-1">
-        {/* Title + platform badge + external-link button */}
+        {/* Title + platform badge + range badge + action buttons */}
         <div className="flex items-start gap-2">
           <span
             className={
@@ -412,6 +550,20 @@ export const SourceCandidate = ({
           >
             {platformLabel}
           </span>
+          {showRangeBadge && (
+            <span
+              className={
+                'shrink-0 rounded-full bg-primary/10 ' +
+                'px-2 py-0.5 text-[10px] font-medium ' +
+                'uppercase tracking-wide text-primary-dark ' +
+                'dark:bg-primary-light/20 ' +
+                'dark:text-primary-light'
+              }
+              title={`Found in ${rangeCount} time ranges`}
+            >
+              {rangeCount} ranges
+            </span>
+          )}
           <p
             className={
               'line-clamp-2 min-w-0 flex-1 text-sm font-medium ' +
@@ -421,6 +573,27 @@ export const SourceCandidate = ({
           >
             {candidate.title}
           </p>
+          {isFailed && (
+            <button
+              type="button"
+              onClick={handleRetryClick}
+              disabled={disabled}
+              aria-label="Retry extraction"
+              title={`Retry extraction (${failure.reason})`}
+              className={
+                'shrink-0 rounded-md p-1 text-red-600 ' +
+                'transition-colors ' +
+                'hover:bg-red-100 hover:text-red-800 ' +
+                'disabled:cursor-not-allowed ' +
+                'focus-visible:outline-none ' +
+                'dark:text-red-400 ' +
+                'dark:hover:bg-red-950/60 ' +
+                'dark:hover:text-red-200'
+              }
+            >
+              <RotateCcw size={14} aria-hidden="true" />
+            </button>
+          )}
           <button
             type="button"
             onClick={handleLinkClick}

@@ -9,10 +9,12 @@
  * The modal has one text field of identity (the title), one
  * freeform field of metadata (the comma- or newline-separated
  * keywords), two dropdowns that route the pipeline (the preset
- * and the profile), and one collapsible advanced section (the
- * prompt file, word-count target, and source-count target).
- * Everything else the topic needs — the userId, the status, the
- * creation timestamp — is derived by the backend.
+ * and the profile), a search distribution section (four numeric
+ * inputs that set how many candidates the search step collects
+ * from each time-range bucket), and one collapsible advanced
+ * section (the prompt file and word-count target). Everything
+ * else the topic needs — the userId, the status, the creation
+ * timestamp — is derived by the backend.
  *
  * Submit flow:
  *
@@ -181,10 +183,10 @@ import { Loader2, Sparkles } from 'lucide-react';
 import Modal from '../../shared/components/Modal.js';
 import PresetSelector from './PresetSelector.js';
 import AdvancedSettings from './AdvancedSettings.js';
+import SearchDistribution from './SearchDistribution.js';
 import { useTopics } from '../hooks/useTopics.js';
 import { useToast } from '../../shared/hooks/useToast.js';
 import {
-  MAX_SOURCES_DEFAULT,
   MAX_WORDS_DEFAULT,
   PROFILE_LABELS,
   PROFILE_NAMES,
@@ -194,6 +196,21 @@ import type {
   ProfileName,
   TopicCreatePayload,
 } from '../../shared/types/index.js';
+
+// ============================================================
+//  Bucket layout shape
+// ============================================================
+
+/**
+ * The four-bucket layout the search distribution section edits.
+ *
+ * Derived from `TopicCreatePayload['searchBuckets']` so the shape
+ * the modal collects cannot drift from the shape the wire format
+ * declares. This is the same derivation `SearchDistribution.tsx`
+ * performs internally, so the two components agree on the shape
+ * by construction.
+ */
+type BucketLayout = NonNullable<TopicCreatePayload['searchBuckets']>;
 
 // ============================================================
 //  Public types
@@ -245,7 +262,7 @@ interface FormValues {
   profile: ProfileName;
   promptFile: string;
   wordCount: number;
-  sourceCount: number;
+  searchBuckets: BucketLayout;
 }
 
 /**
@@ -267,7 +284,12 @@ const INITIAL_FORM_VALUES: FormValues = {
   profile: 'blog-post',
   promptFile: 'default.md',
   wordCount: MAX_WORDS_DEFAULT,
-  sourceCount: MAX_SOURCES_DEFAULT,
+  searchBuckets: {
+    anyTime: 4,
+    pastYear: 2,
+    pastMonth: 2,
+    pastWeek: 2,
+  },
 };
 
 // ============================================================
@@ -416,9 +438,17 @@ export const NewTopicModal = ({ open, onClose }: NewTopicModalProps) => {
   const handleAdvancedChange = (patch: {
     promptFile?: string;
     wordCount?: number;
-    sourceCount?: number;
   }): void => {
     setValues((prev) => ({ ...prev, ...patch }));
+  };
+  
+    const handleSearchBucketsChange = (
+    patch: Partial<BucketLayout>
+  ): void => {
+    setValues((prev) => ({
+      ...prev,
+      searchBuckets: { ...prev.searchBuckets, ...patch },
+    }));
   };
 
   // ---- Submit handler ----
@@ -446,7 +476,7 @@ export const NewTopicModal = ({ open, onClose }: NewTopicModalProps) => {
       profile: values.profile,
       promptFile: values.promptFile,
       wordCount: values.wordCount,
-      sourceCount: values.sourceCount,
+      searchBuckets: values.searchBuckets,
     };
 
     const keywords = parseKeywords(values.keywordsInput);
@@ -666,12 +696,18 @@ export const NewTopicModal = ({ open, onClose }: NewTopicModalProps) => {
           </select>
         </div>
 
+        {/* ---- Search distribution ---- */}
+        <SearchDistribution
+          value={values.searchBuckets}
+          onChange={handleSearchBucketsChange}
+          disabled={submitting}
+        />
+
         {/* ---- Advanced settings (forward reference) ---- */}
         <AdvancedSettings
           values={{
             promptFile: values.promptFile,
             wordCount: values.wordCount,
-            sourceCount: values.sourceCount,
           }}
           onChange={handleAdvancedChange}
           disabled={submitting}
