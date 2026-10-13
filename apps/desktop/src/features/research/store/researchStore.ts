@@ -952,7 +952,8 @@ export const useResearchStore = create<ResearchStoreState>(
             topicId,
             title,
             keywords,
-            entry.key
+            entry.key,
+            entry.count
           );
 
           if (!result.success) {

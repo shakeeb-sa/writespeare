@@ -137,11 +137,7 @@ import {
 } from '../services/searchService.js';
 import { runExtract } from '../services/extractionService.js';
 import { getByTaskId } from '../services/childProcessManager.js';
-import { apiGet } from '../../shared/api/client.js';
-import type {
-  ApiResponse,
-  Topic,
-} from '../../shared/types/index.js';
+import type { ApiResponse } from '../../shared/types/index.js';
 
 // =============================================================================
 //  Channel name constants
@@ -332,34 +328,7 @@ const deleteFileIfExists = async (filepath: string): Promise<void> => {
 //  Backend helpers
 // ============================================================
 
-/**
- * Fetch the topic's `sourceCount` from the backend.
- *
- * The value is used as the search's `maxResults` — the number of
- * candidates to collect. The plan's preset-wiring work (PR-2 of
- * the approved runbook) replaced the previous hard-coded
- * `DEFAULT_MAX_RESULTS = 20` with a per-topic value read from
- * the topic's own record. Once PR-3 lands and the search runs
- * once per time-range bucket, the value the caller needs becomes
- * the topic's per-bucket configuration rather than the aggregate
- * `sourceCount`; the change is to this helper's return shape and
- * the caller's use of it.
- *
- * Throws when the topic cannot be fetched — a backend error, an
- * expired session, a 404 for an unknown topic. The caller
- * (`handleSearch`) catches and converts the throw into an error
- * envelope. A search whose source count is unknown cannot be run
- * meaningfully, so failing fast is the honest behavior.
- */
-const fetchTopicSourceCount = async (topicId: string): Promise<number> => {
-  const result = await apiGet<Topic>(
-    `/topics/${encodeURIComponent(topicId)}`
-  );
-  if (result.success && result.data) {
-    return result.data.sourceCount;
-  }
-  throw new Error(result.error ?? 'Topic could not be loaded.');
-};
+
 
 // ============================================================
 //  research:search
@@ -382,6 +351,15 @@ const fetchTopicSourceCount = async (topicId: string): Promise<number> => {
  *               below and passed through to the search service,
  *               which forwards it to the Python script as the
  *               `--time-range` argument.
+ *   count     — how many candidates this bucket's search should
+ *               collect. Required; a positive integer. The value
+ *               is supplied by the renderer's
+ *               `researchStore.runFullSearch`, which reads it
+ *               from the topic's per-bucket configuration (the
+ *               `searchBuckets` field). It is passed to the
+ *               search service as `maxResults` and forwarded to
+ *               the Python script as the `--max-results`
+ *               argument.
  *
  * Returns:
  *
@@ -400,7 +378,8 @@ const handleSearch = async (
   topicId: unknown,
   title: unknown,
   keywords: unknown,
-  timeRange: unknown
+  timeRange: unknown,
+  count: unknown
 ): Promise<ApiResponse<{ candidates: string[] }>> => {
   // ---- Validate ----
   if (typeof topicId !== 'string' || topicId.trim().length === 0) {
@@ -422,6 +401,27 @@ const handleSearch = async (
       success: false,
       error:
         'timeRange must be one of: anytime, year, month, week.',
+    };
+  }
+
+  // The count argument is the number of candidates this bucket
+  // should collect. It is validated as a positive integer; a
+  // non-positive or non-integer value is rejected here, before
+  // any service call runs. Prior to this modification, the
+  // handler read `maxResults` from the topic's aggregate
+  // `sourceCount` and used that same value for every bucket,
+  // which is why a per-bucket selection of `1` still produced
+  // 8–9 candidates per bucket — the real cap was the sum of all
+  // four bucket counts, not the value selected for the bucket
+  // being searched.
+  if (
+    typeof count !== 'number' ||
+    !Number.isInteger(count) ||
+    count <= 0
+  ) {
+    return {
+      success: false,
+      error: 'count must be a positive integer.',
     };
   }
 
@@ -448,28 +448,17 @@ const handleSearch = async (
     }
   }
 
-  // ---- Fetch the topic's source count ----
-  // The search's max-results value comes from the topic's own
-  // record rather than a hard-coded constant. See the
-  // `fetchTopicSourceCount` helper for the reasoning and for the
-  // PR-3 follow-up.
-  let maxResults: number;
-  try {
-    maxResults = await fetchTopicSourceCount(topicId.trim());
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : String(err);
-    return {
-      success: false,
-      error: `Could not load the topic: ${message}`,
-    };
-  }
-
   // ---- Delegate ----
+  // The `count` value validated above is the number of
+  // candidates this specific bucket should collect. It arrives
+  // from the renderer, which read it from the topic's
+  // per-bucket configuration (the `searchBuckets` field). The
+  // search service forwards it to the Python script as the
+  // `--max-results` argument.
   const result = await runSearch({
     query: title.trim(),
     keywords: normalizedKeywords,
-    maxResults,
+    maxResults: count,
     topicId: topicId.trim(),
     timeRange,
   });

@@ -293,7 +293,8 @@ interface ResearchNamespace {
     topicId: string,
     title: string,
     keywords: string[],
-    timeRange: BucketKey
+    timeRange: BucketKey,
+    count: number
   ) => Promise<ApiResponse<{ candidates: string[] }>>;
 
   /**
@@ -749,13 +750,14 @@ const api: ElectronAPI = {
 
   // ---- Research ----
   research: {
-    search: (topicId, title, keywords, timeRange) =>
+    search: (topicId, title, keywords, timeRange, count) =>
       invoke<{ candidates: string[] }>(
         'research:search',
         topicId,
         title,
         keywords,
-        timeRange
+        timeRange,
+        count
       ),
     extract: (topicId, urls) =>
       invoke<{ savedCount: number }>('research:extract', topicId, urls),
