@@ -721,23 +721,35 @@ export const runBundle = async (
 
   // The two failure signals and the one success signal are
   // captured in a single promise that the function awaits. Any
-  // of the three resolves the promise; the `writeFailed` check
-  // below distinguishes the two failure cases from the success
-  // case.
+  // of the three resolves the promise; the `state.writeFailed`
+  // check below distinguishes the two failure cases from the
+  // success case.
   //
-  // `writeFailed` is declared `let` and assigned inside the
-  // handlers. TypeScript's control-flow analysis does not track
-  // the assignment-through-closure, so the final read of the
-  // variable is widened with `as Error | null` — see the
-  // read below.
-  let writeFailed: Error | null = null;
+  // The error is held as a property on a `const` object rather
+  // than as a `let` variable. TypeScript's control-flow analysis
+  // does not see assignments made inside a callback closure when
+  // deciding what a local `let` variable's type is at a later
+  // read site — it flow-narrows the read back to the variable's
+  // last visible assignment in the surrounding scope, which for
+  // a `let` initialised to `null` and never reassigned in that
+  // scope is `null`. Holding the value as a property of a
+  // `const` object sidesteps the narrowing entirely: property
+  // reads are evaluated against the object's declared property
+  // type, not against the current scope's flow state.
+  //
+  // This pattern removes the need for any `as` cast at the read
+  // site. The previous code used `(writeFailed as Error | null)`
+  // on the comparison and `(writeFailed as Error)` on the error
+  // message; the second of those is what produced the TS 2352
+  // error this edit fixes.
+  const state: { writeFailed: Error | null } = { writeFailed: null };
   const done = new Promise<void>((resolve) => {
     archive.once('error', (err: Error) => {
-      writeFailed = err;
+      state.writeFailed = err;
       resolve();
     });
     output.once('error', (err: Error) => {
-      writeFailed = err;
+      state.writeFailed = err;
       resolve();
     });
     output.once('close', () => {
@@ -852,15 +864,17 @@ export const runBundle = async (
 
   await done;
 
-  // The `as Error | null` cast widens the type so the check
-  // below is not narrowed to `always null` by the compiler's
-  // control-flow analysis. See the comment on `writeFailed`
-  // above for the reasoning.
-  if ((writeFailed as Error | null) !== null) {
+  // `state.writeFailed` is typed `Error | null` at this read
+  // site without any cast — see the comment on the `state`
+  // declaration above for why the property form avoids the
+  // flow-narrowing problem the previous `let`-variable form
+  // had. The `!== null` check narrows the type to `Error` for
+  // the property access inside the branch.
+  if (state.writeFailed !== null) {
     return {
       success: false,
       outputPath: options.outputPath,
-      error: `Could not write archive: ${(writeFailed as Error).message}`,
+      error: `Could not write archive: ${state.writeFailed.message}`,
     };
   }
 

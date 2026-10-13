@@ -144,9 +144,12 @@
  *
  *   The `DeepSeekLoginModal` is mounted once per render branch
  *   (idle, in-flight, error, success) so that a state change
- *   while the modal is open does not unmount it. The modal reads
- *   its own visibility from `useDeepSeekSession()`; the button
- *   below only calls `openLoginModal()`, which sets that flag.
+ *   while the modal is open does not unmount it. The modal is a
+ *   controlled component: it receives `open` (from the hook's
+ *   `isLoginModalOpen` flag) and `onClose` (the hook's
+ *   `closeLoginModal` action). The CTA button below calls
+ *   `openLoginModal()`, which flips the flag the modal's `open`
+ *   prop reads.
  */
 
 import { useCallback } from 'react';
@@ -326,13 +329,20 @@ export const WriterProgress = ({ topic }: WriterProgressProps) => {
   // ---- DeepSeek session (PR-7) ----
   // App-wide, not per-topic — the session lives in the app's
   // persistent Chrome profile, not in a topic record. The hook
-  // returns `status` (null before the first check, a
+  // returns `session` (null before the first check, a
   // `DeepSeekSessionStatus` object once a check has run),
-  // `checkNow`, and `openLoginModal`. This component reads only
-  // `status` (to decide whether to show the sign-in CTA) and
-  // `openLoginModal` (to trigger the modal from that CTA).
-  const { status: sessionStatus, openLoginModal } =
-    useDeepSeekSession();
+  // `isChecking`, `isLoginModalOpen`, `checkNow`,
+  // `openLoginModal`, and `closeLoginModal`. This component
+  // reads `session` (to decide whether to show the sign-in
+  // CTA), and the modal-control pair (`isLoginModalOpen` plus
+  // `closeLoginModal`) alongside `openLoginModal` to drive the
+  // `DeepSeekLoginModal` instance the CTA opens.
+  const {
+    session: sessionStatus,
+    isLoginModalOpen,
+    openLoginModal,
+    closeLoginModal,
+  } = useDeepSeekSession();
 
   // ---- Start ---- 
   // The handler for the "Generate Article" button in the idle
@@ -361,7 +371,10 @@ export const WriterProgress = ({ topic }: WriterProgressProps) => {
     return (
       <>
         <InFlightPanel progress={progress} onCancel={handleCancel} />
-        <DeepSeekLoginModal />
+        <DeepSeekLoginModal
+          open={isLoginModalOpen}
+          onClose={closeLoginModal}
+        />
       </>
     );
   }
@@ -427,7 +440,10 @@ export const WriterProgress = ({ topic }: WriterProgressProps) => {
             </button>
           </div>
         </div>
-        <DeepSeekLoginModal />
+        <DeepSeekLoginModal
+          open={isLoginModalOpen}
+          onClose={closeLoginModal}
+        />
       </>
     );
   }
@@ -487,7 +503,10 @@ export const WriterProgress = ({ topic }: WriterProgressProps) => {
             Regenerate
           </button>
         </div>
-        <DeepSeekLoginModal />
+        <DeepSeekLoginModal
+          open={isLoginModalOpen}
+          onClose={closeLoginModal}
+        />
       </>
     );
   }
@@ -579,7 +598,10 @@ export const WriterProgress = ({ topic }: WriterProgressProps) => {
           <span>Generate Article</span>
         </button>
       </div>
-      <DeepSeekLoginModal />
+      <DeepSeekLoginModal
+        open={isLoginModalOpen}
+        onClose={closeLoginModal}
+      />
     </>
   );
 };

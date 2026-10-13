@@ -900,7 +900,22 @@ export const useResearchStore = create<ResearchStoreState>(
       // configured counts. A bucket whose count is zero is
       // dropped from the plan entirely (see Q8.3 — zero-value
       // buckets are skipped, not searched-and-empty).
-      const bucketPlan: ReadonlyArray<{
+      //
+      // The declaration is split into two statements on purpose.
+      // If the array literal were built inline and `.filter(...)`
+      // chained on it, TypeScript would infer the literal's type
+      // with no contextual type — the annotation on the left of
+      // the assignment applies only to the final expression, and
+      // that context does not propagate back through a method
+      // call. Each `'anytime'` / `'year'` / `'month'` / `'week'`
+      // string would widen to `string`, and the assignment to
+      // `ReadonlyArray<{ key: BucketKey; count: number }>` would
+      // then fail (TS 2322). Naming the literal on its own line
+      // makes the annotation its direct contextual type, so the
+      // four keys are checked against `BucketKey` at the
+      // literal — where they belong — and the subsequent
+      // `.filter(...)` runs on an already-typed array.
+      const allBuckets: ReadonlyArray<{
         key: BucketKey;
         count: number;
       }> = [
@@ -908,7 +923,10 @@ export const useResearchStore = create<ResearchStoreState>(
         { key: 'year', count: bucketConfig.pastYear },
         { key: 'month', count: bucketConfig.pastMonth },
         { key: 'week', count: bucketConfig.pastWeek },
-      ].filter((entry) => entry.count > 0);
+      ];
+      const bucketPlan = allBuckets.filter(
+        (entry) => entry.count > 0
+      );
 
       if (bucketPlan.length === 0) {
         // Nothing to search. Mark the operation complete and

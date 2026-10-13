@@ -244,6 +244,22 @@ export interface Topic {
   promptFile: string;
   wordCount: number;
   sourceCount: number;
+  /**
+   * The topic's snapshot of the four time-range search bucket
+   * counts. Captured at creation from the chosen preset's
+   * `defaultBucketLayout` (or from the user's settings-level
+   * default when no preset overrides it), and editable per
+   * topic afterward. The single source of truth for "how many
+   * sources to collect" per the plan's Item 3 / C2 decision;
+   * `sourceCount` on this record is derived from the sum of the
+   * four counts.
+   */
+  searchBuckets: {
+    anyTime: number;
+    pastYear: number;
+    pastMonth: number;
+    pastWeek: number;
+  };
   status: TopicStatus;
   /** Populated only when `status === 'failed'`. */
   error?: string;
@@ -267,6 +283,22 @@ export interface TopicCreatePayload {
   promptFile?: string;
   wordCount?: number;
   sourceCount?: number;
+  /**
+   * The initial four-bucket search layout. When provided, the
+   * backend derives `sourceCount` as the sum of the four counts
+   * (per Item 3 / C2 — the bucket layout is the authoritative
+   * count input). When omitted, the backend applies the
+   * user's `defaultBucketLayout` from their settings, or the
+   * chosen preset's `defaultBucketLayout` if the caller supplied
+   * a preset. A zero count for a bucket means "skip that time
+   * range entirely" (Q8.3).
+   */
+  searchBuckets?: {
+    anyTime: number;
+    pastYear: number;
+    pastMonth: number;
+    pastWeek: number;
+  };
 }
 
 /**
@@ -282,6 +314,20 @@ export interface TopicUpdatePayload {
   promptFile?: string;
   wordCount?: number;
   sourceCount?: number;
+  /**
+   * Replace the topic's four-bucket search layout. Same semantics
+   * as `TopicCreatePayload.searchBuckets` — the four counts are
+   * the authoritative input, and `sourceCount` is derived as
+   * their sum when this field is present. A partial update that
+   * omits this field leaves the topic's existing layout
+   * untouched.
+   */
+  searchBuckets?: {
+    anyTime: number;
+    pastYear: number;
+    pastMonth: number;
+    pastWeek: number;
+  };
   status?: TopicStatus;
   error?: string;
 }
@@ -619,6 +665,22 @@ export interface UserSettingsMap {
   autoSaveAfterEachStage: boolean;
   notifyOnCompletion: boolean;
   theme: 'light' | 'dark';
+  /**
+   * The user's default bucket layout for the four time-range
+   * search buckets. Seeds the `searchBuckets` field on a new
+   * Topic when no preset overrides it (see the plan's Item 3 /
+   * C2 decision — bucket layout is the single source of truth
+   * for "how many sources to collect"). The same four-key shape
+   * the Topic schema's `searchBuckets` field and the renderer's
+   * `BucketConfig` type use; a count of zero means "skip this
+   * time range entirely" (Q8.3).
+   */
+  defaultBucketLayout: {
+    anyTime: number;
+    pastYear: number;
+    pastMonth: number;
+    pastWeek: number;
+  };
   /**
    * Where the "Download bundle" flow writes the topic's archive
    * ZIP. `'ask'` opens a Save-As dialog on every download so the

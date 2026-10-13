@@ -622,17 +622,6 @@ export const usePrompts = (): PromptsHookValue => {
 
   const validate = useCallback(
     async (contentToValidate: string): Promise<PromptValidationResult> => {
-      // A local fallback result for the two unexpected cases —
-      // an IPC rejection or a success envelope with no data.
-      // The shape matches the discriminated union's failure arm
-      // so the caller's error-handling branch handles it
-      // uniformly.
-      const fallback: PromptValidationResult = {
-        valid: false,
-        error: 'Validation service unavailable.',
-        line: 0,
-      };
-
       try {
         const result =
           await window.electronAPI.prompts.validate(contentToValidate);

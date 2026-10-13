@@ -78,10 +78,14 @@
  *   forward-reference pattern every feature's page in this
  *   codebase has used for its not-yet-created dependencies.
  *
- *   The `ExportMenu` is passed the article's `_id` as its
- *   `articleId` prop. The naming matches the backend's export
- *   IPC channels (`export:docx`, `export:md`, `export:txt`),
- *   which all take an article ID as their sole argument.
+ *   The `ExportMenu` receives two props: the article's `_id` as
+ *   its `articleId`, and the topic's `_id` as its `topicId`. The
+ *   article ID drives the three article-scoped export channels
+ *   (`export:docx`, `export:md`, `export:txt`); the topic ID
+ *   drives the two topic-scoped shortcut channels
+ *   (`export:report`, `export:sources`). Both IDs are in scope
+ *   here — the component's `topic` prop carries the topic, and
+ *   the writer store's `article` carries the article.
  *
  * ── Why the component does NOT fetch the article on mount ──────
  *
@@ -484,10 +488,16 @@ export const ArticlePreview = ({ topic }: ArticlePreviewProps) => {
                 <span>Regenerate</span>
               </button>
 
-              {/* Forward reference to the export feature's
-                  dropdown. See the file header for the
-                  import's TS2307 status. */}
-              <ExportMenu articleId={article._id} />
+              {/* The export dropdown. Two IDs are passed: the
+                  article's for the article-scoped channels
+                  (Word / Markdown / text), and the topic's for
+                  the topic-scoped shortcuts (report / sources).
+                  See `ExportMenu.tsx`'s `ExportMenuProps` for the
+                  full contract. */}
+              <ExportMenu
+                articleId={article._id}
+                topicId={topic._id}
+              />
             </>
           )}
 

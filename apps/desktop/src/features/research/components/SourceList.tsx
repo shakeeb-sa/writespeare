@@ -99,11 +99,16 @@
  * ── Why selection is a Set<string> keyed by URL ─────────────────
  *
  *   The candidates' identity is their URL. Two candidates with
- *   the same URL from different buckets are the same source; the
- *   store deduplicates them before they reach this component, so
- *   the URL is unique across the flattened list. A `Set<string>`
- *   of URLs gives O(1) membership tests for the per-row "is this
- *   one checked" question, and O(1) toggles.
+ *   the same URL from different buckets are the same source. The
+ *   store keeps the buckets separate — the same URL can appear
+ *   in more than one of them — so this component deduplicates at
+ *   render time: a URL is shown in exactly one section, the
+ *   first bucket (in `anytime → year → month → week` order) that
+ *   contains it, and its row carries a "found in N ranges" badge
+ *   whose value is the number of buckets the URL appeared in
+ *   (Q8.6). A `Set<string>` of URLs gives O(1) membership tests
+ *   for the per-row "is this one checked" question, and O(1)
+ *   toggles.
  *
  *   The alternative — a `Set<number>` of candidate indices — would
  *   require the effect to recompute the index of every candidate
@@ -150,7 +155,11 @@
  *     see the imports). This component owns the list container,
  *     the sections, the selection state, and the actions; the
  *     row is a leaf that receives `{ candidate, selected,
- *     disabled, onToggle }` and renders one item's UI.
+ *     disabled, onToggle, rangeCount, failure, onRetry }` and
+ *     renders one item's UI. `rangeCount` and `failure` are
+ *     computed here from the per-bucket records and the failed
+ *     list; `onRetry` is the per-row handler that runs extraction
+ *     on the single failed URL.
  *
  *   - It does not manage the search itself. That is
  *     `SearchProgress`'s job — the sibling component rendered
@@ -188,6 +197,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useState,
 } from 'react';
 import {
@@ -202,7 +212,11 @@ import {
 } from 'lucide-react';
 
 import { useResearch } from '../hooks/useResearch.js';
-import type { BucketKey } from '../store/researchStore.js';
+import type {
+  BucketKey,
+  FailedUrlRecord,
+  SearchCandidate,
+} from '../store/researchStore.js';
 import SourceCandidate from './SourceCandidate.js';
 import type { Topic } from '../../shared/types/index.js';
 
@@ -317,12 +331,83 @@ export const SourceList = ({ topic }: SourceListProps) => {
     setSelectedUrls(new Set(candidates.map((c) => c.url)));
   }, [candidates]);
 
+
+    // ---- Per-URL range count and deduplicated per-bucket record ----
+  // The store keeps candidates per bucket without deduplication —
+  // the same URL can appear in two buckets' results. Two passes
+  // over the four buckets produce the data this component needs:
+  //
+  //   1. `rangeCountByUrl` records, for each URL, how many of the
+  //      four buckets contained it. This is the value the
+  //      `rangeCount` prop on `SourceCandidate` renders as the
+  //      "found in N ranges" badge (Q8.6).
+  //
+  //   2. `candidatesByBucketDeduped` mirrors the shape of the
+  //      store's record, but each URL is present in exactly one
+  //      bucket — its *primary* bucket, the first one in
+  //      `anytime → year → month → week` order that contains it.
+  //      The render loop iterates this record instead of the
+  //      store's, so a URL that appeared in both "anytime" and
+  //      "past week" is shown once, under "Any time".
+  //
+  // Both maps are memoized on `candidatesByBucket`'s identity. The
+  // hook memoizes that record on the topic's slot, so a marker for
+  // a different topic does not recompute either map.
+  const { rangeCountByUrl, candidatesByBucketDeduped } = useMemo(() => {
+    const counts = new Map<string, number>();
+    const primary = new Map<string, BucketKey>();
+    for (const bucket of BUCKET_KEYS) {
+      for (const c of candidatesByBucket[bucket]) {
+        counts.set(c.url, (counts.get(c.url) ?? 0) + 1);
+        if (!primary.has(c.url)) {
+          primary.set(c.url, bucket);
+        }
+      }
+    }
+    const deduped: Record<BucketKey, SearchCandidate[]> = {
+      anytime: [],
+      year: [],
+      month: [],
+      week: [],
+    };
+    for (const bucket of BUCKET_KEYS) {
+      for (const c of candidatesByBucket[bucket]) {
+        if (primary.get(c.url) === bucket) {
+          deduped[bucket].push(c);
+        }
+      }
+    }
+    return {
+      rangeCountByUrl: counts,
+      candidatesByBucketDeduped: deduped,
+    };
+  }, [candidatesByBucket]);
+
+  // ---- Failure lookup ----
+  // A Map from URL → the URL's last failure record, so the render
+  // loop can look up a candidate's failure in O(1) without
+  // scanning the whole `failed` array for every row. The Map is
+  // memoized on the failed array's identity, which the store
+  // replaces whenever a load or a bulk retry refreshes the list.
+  const failureByUrl = useMemo(() => {
+    const map = new Map<string, FailedUrlRecord>();
+    for (const record of failed) {
+      map.set(record.url, record);
+    }
+    return map;
+  }, [failed]);
+
+
   // ---- Derived counts ----
-  // Both are O(n) over the flattened candidate list, which is at
-  // most a few dozen elements — cheap, and the values are read
-  // during render so no memoization is warranted.
+  // `totalCount` is the number of unique candidate URLs — the
+  // size of the range-count map — not the length of the flattened
+  // list. A URL found in two buckets appears twice in the
+  // flattened `candidates` array but is a single source, and the
+  // "selected N of M" line and the "Select all" toggle must both
+  // agree with what the user sees in the sections. The range-count
+  // map's key count is exactly that number.
   const selectedCount = selectedUrls.size;
-  const totalCount = candidates.length;
+  const totalCount = rangeCountByUrl.size;
   const allSelected = totalCount > 0 && selectedCount === totalCount;
 
   // ---- Toggle one candidate ----
@@ -342,14 +427,25 @@ export const SourceList = ({ topic }: SourceListProps) => {
   // When every candidate is selected, the control deselects them
   // all. Otherwise it selects them all. This is the standard
   // "one button, two states" pattern for a select-all control.
+  //
+  // The "are all currently selected" test compares against
+  // `totalCount` — the unique-URL count — rather than against the
+  // flattened array's length. A URL present in two buckets would
+  // otherwise make the flattened length exceed the selected Set's
+  // maximum size, and the toggle would never flip to the
+  // "Clear selection" state.
+  //
+  // The construction `new Set(candidates.map(c => c.url))` is
+  // deduplicated by the Set itself — the map may produce the same
+  // URL twice, but the Set holds it once.
   const handleToggleAll = useCallback((): void => {
     setSelectedUrls((prev) => {
-      if (prev.size === candidates.length) {
+      if (prev.size === totalCount) {
         return new Set<string>();
       }
       return new Set(candidates.map((c) => c.url));
     });
-  }, [candidates]);
+  }, [candidates, totalCount]);
 
   // ---- Toggle one section ----
   // Flips the collapsed flag for one bucket. The functional
@@ -386,6 +482,34 @@ export const SourceList = ({ topic }: SourceListProps) => {
   const handleRetryFailed = useCallback((): void => {
     void retryFailed(topic._id);
   }, [retryFailed, topic._id]);
+
+    // ---- Retry one URL ----
+  // Per-row retry, wired to the retry icon button on a failed
+  // `SourceCandidate`. Runs extraction on the single URL directly
+  // via the hook's `fetchSelected`, which is the same store action
+  // `runExtraction` uses; the URL-list argument is a one-element
+  // array instead of the whole selected set.
+  //
+  // The bulk "Retry all failed (N)" banner above uses the store's
+  // `retryFailed` action instead — that action reads the topic's
+  // failed list, retries all of them at once, and refreshes the
+  // failed list from disk afterward. The per-row path does not
+  // have a matching per-URL store action (the plan's PR-4 assigns
+  // one action, `retryFailed`, to the bulk flow, and the per-row
+  // UI reaches the same extraction service through
+  // `fetchSelected`). The consequence the user should know: after
+  // a per-row retry succeeds, the failed-list slot in the store
+  // is not refreshed until the next topic open runs
+  // `loadCandidates`. A future session that wanted the list to
+  // refresh immediately would add a `retryOne(topicId, url)`
+  // store action that mirrors `retryFailed`'s refresh step.
+  const handleRetryOne = useCallback(
+    (url: string): void => {
+      void fetchSelected(topic._id, [url]);
+    },
+    [fetchSelected, topic._id]
+  );
+
 
   // ---- Flags ----
   // `isExtracting` gates every interaction while an extraction is
@@ -512,7 +636,8 @@ export const SourceList = ({ topic }: SourceListProps) => {
           whose header is a disclosure button. */}
       <div className="max-h-[36rem] space-y-3 overflow-y-auto pr-1">
         {BUCKET_KEYS.map((bucketKey) => {
-          const bucketCandidates = candidatesByBucket[bucketKey];
+          const bucketCandidates =
+            candidatesByBucketDeduped[bucketKey];
           const collapsed = collapsedByBucket[bucketKey];
           const Chevron = collapsed ? ChevronRight : ChevronDown;
           const bucketCount = bucketCandidates.length;
@@ -586,6 +711,11 @@ export const SourceList = ({ topic }: SourceListProps) => {
                       selected={selectedUrls.has(candidate.url)}
                       disabled={isExtracting}
                       onToggle={handleToggle}
+                      rangeCount={
+                        rangeCountByUrl.get(candidate.url) ?? 1
+                      }
+                      failure={failureByUrl.get(candidate.url) ?? null}
+                      onRetry={handleRetryOne}
                     />
                   ))}
                 </div>

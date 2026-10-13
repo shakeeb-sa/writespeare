@@ -135,13 +135,18 @@ import {
   runExport,
   type ExportFormat,
 } from '../services/exportService.js';
-import { runBundle } from '../services/bundleService.js';
-import { renderReportMarkdown } from '../services/reportRenderer.js';
+import {
+  runBundle,
+  type BundleServiceOptions,
+} from '../services/bundleService.js';
+import {
+  renderReportMarkdown,
+  type OnDiskReport,
+} from '../services/reportRenderer.js';
 import { apiGet } from '../../shared/api/client.js';
 import type {
   ApiResponse,
   Article,
-  Report,
   Topic,
   UserSetting,
 } from '../../shared/types/index.js';
@@ -379,37 +384,6 @@ interface DialogConfig {
   filterLabel: string;
 }
 
-/**
- * The `options` argument accepted by the `export:bundle` channel.
- *
- * The renderer's `DownloadBundleModal` builds one of these from
- * its checkbox list and passes it through the preload's
- * `export.bundle(topicId, options)` call. Every flag is
- * optional; an omitted flag defaults to `true` — a caller that
- * wants the full bundle passes no options at all.
- *
- * The shape mirrors the checkbox list the modal renders
- * (Q3.1 / C2): Article, Sources, Report, Prompt used, Preset
- * used, Topic metadata.
- */
-export interface BundleChannelOptions {
-  include?: {
-    /** The generated article Markdown. Defaults to true. */
-    article?: boolean;
-    /** The extracted source documents. Defaults to true. */
-    sources?: boolean;
-    /** The validation report (JSON + rendered Markdown).
-     *  Defaults to true. */
-    report?: boolean;
-    /** The prompt file the writer used. Defaults to true. */
-    prompt?: boolean;
-    /** The preset the topic snapshotted. Defaults to true. */
-    preset?: boolean;
-    /** The topic's own metadata (title, keywords, status).
-     *  Defaults to true. */
-    metadata?: boolean;
-  };
-}
 
 /**
  * Open a native Save-As dialog with the article's title as the
@@ -715,10 +689,18 @@ const handleBundle = async (
   const trimmedTopicId = topicId.trim();
 
   // ---- Validate options ----
-  // The options argument may be omitted entirely (the preload
-  // passes `undefined`) or may be a partial object. Anything
-  // else — a string, a number, an array — is a malformed call.
-  let parsed: BundleChannelOptions = {};
+  // The options argument is the flat `BundleOptions` object the
+  // preload's `export.bundle(topicId, options)` passes through
+  // unchanged. Each flag is a boolean; an omitted flag defaults
+  // to `true`. Anything that is not an object (or is `undefined`
+  // / `null`) is a malformed call.
+  //
+  // The field names match the preload's `BundleOptions` interface
+  // and, in turn, the `BundleServiceOptions` type this handler
+  // passes them to. Any drift between the three is a compile-time
+  // error at the `runBundle` call site below — see the shape
+  // check on the `bundleOptions` object.
+  let parsed: Record<string, unknown> = {};
   if (options !== undefined && options !== null) {
     if (typeof options !== 'object' || Array.isArray(options)) {
       return {
@@ -726,20 +708,18 @@ const handleBundle = async (
         error: 'options must be an object when provided.',
       };
     }
-    parsed = options as BundleChannelOptions;
+    parsed = options as Record<string, unknown>;
   }
   // Every flag defaults to true. `!== false` (rather than
   // `=== true`) is what makes "omitted" and "explicitly true"
   // both resolve to true, and only "explicitly false" turn an
   // artifact off.
-  const include = {
-    article: parsed.include?.article !== false,
-    sources: parsed.include?.sources !== false,
-    report: parsed.include?.report !== false,
-    prompt: parsed.include?.prompt !== false,
-    preset: parsed.include?.preset !== false,
-    metadata: parsed.include?.metadata !== false,
-  };
+  const includeArticle = parsed['includeArticle'] !== false;
+  const includeSources = parsed['includeSources'] !== false;
+  const includeReports = parsed['includeReports'] !== false;
+  const includePrompt = parsed['includePrompt'] !== false;
+  const includePreset = parsed['includePreset'] !== false;
+  const includeMetadata = parsed['includeMetadata'] !== false;
 
   // ---- Fetch the topic (for the default filename slug) ----
   const topicResult = await apiGet<Topic>(
@@ -775,13 +755,26 @@ const handleBundle = async (
   }
 
   // ---- Run the bundle ----
+  // The options object is typed as `BundleServiceOptions` so a
+  // future drift between this call site and `bundleService.ts`'s
+  // contract is a compile-time error here, not a silent runtime
+  // mismatch. Every field on `BundleServiceOptions` that is not
+  // `topicId` or `outputPath` is one of the six flat include
+  // flags the caller provided (or defaulted).
+  const bundleOptions: BundleServiceOptions = {
+    topicId: trimmedTopicId,
+    outputPath,
+    includeArticle,
+    includeSources,
+    includeReports,
+    includePrompt,
+    includePreset,
+    includeMetadata,
+  };
+
   let result;
   try {
-    result = await runBundle({
-      topicId: trimmedTopicId,
-      outputPath,
-      include,
-    });
+    result = await runBundle(bundleOptions);
   } catch (err) {
     const message =
       err instanceof Error ? err.message : String(err);
@@ -834,10 +827,20 @@ const handleReport = async (
   }
 
   // ---- Read and parse ----
-  let report: Report;
+  // The file is the on-disk report the Python validation runner
+  // writes to `<topicFolder>/reports/report-*.json`. Its shape is
+  // `OnDiskReport` — the backend's `Report` response type plus
+  // the two runner-side fields `articlePath` and `validatedAt`.
+  // The renderer's `renderReportMarkdown` reads only the six
+  // section fields (readability, seo, keywords, originality,
+  // aiMarkers, grammar) and the `overallStatus` field, all of
+  // which are present on both types; typing the value as
+  // `OnDiskReport` is what makes the call site match the
+  // renderer's declared parameter.
+  let report: OnDiskReport;
   try {
     const raw = await fs.readFile(reportPath, 'utf-8');
-    report = JSON.parse(raw) as Report;
+    report = JSON.parse(raw) as OnDiskReport;
   } catch (err) {
     const message =
       err instanceof Error ? err.message : String(err);
@@ -947,20 +950,24 @@ const handleSources = async (
   }
 
   // ---- Run the bundle with only sources enabled ----
+  // Same flat-options shape as the full-bundle handler; only
+  // `includeSources` is true. The other five flags are explicit
+  // `false` so the resulting ZIP contains exactly one artifact
+  // folder.
+  const sourcesOnlyOptions: BundleServiceOptions = {
+    topicId: trimmedTopicId,
+    outputPath,
+    includeArticle: false,
+    includeSources: true,
+    includeReports: false,
+    includePrompt: false,
+    includePreset: false,
+    includeMetadata: false,
+  };
+
   let result;
   try {
-    result = await runBundle({
-      topicId: trimmedTopicId,
-      outputPath,
-      include: {
-        article: false,
-        sources: true,
-        report: false,
-        prompt: false,
-        preset: false,
-        metadata: false,
-      },
-    });
+    result = await runBundle(sourcesOnlyOptions);
   } catch (err) {
     const message =
       err instanceof Error ? err.message : String(err);
@@ -1046,7 +1053,9 @@ export const registerExportIPC = (): void => {
   // ---- export:bundle ----
   // The topic-level archive. The options argument carries the
   // DownloadBundleModal's per-artifact include list; see the
-  // `BundleChannelOptions` interface for its shape.
+  // `BundleServiceOptions` type in `bundleService.ts` for its
+  // shape (the same flat six-flag form the preload's
+  // `BundleOptions` interface declares).
   ipcMain.handle(
     CHANNEL_BUNDLE,
     async (

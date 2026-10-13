@@ -277,6 +277,39 @@ const LOGIN_URL_FRAGMENTS: readonly string[] = [
 ];
 
 /**
+ * The JavaScript fragment-check expression built from
+ * `LOGIN_URL_FRAGMENTS`.
+ *
+ * `CHECK_EXPRESSION` below is evaluated in the DeepSeek page's
+ * own JavaScript context, so it cannot reference a TypeScript
+ * constant directly. This intermediate builds the JS expression
+ * — a chain of `href.indexOf("...") !== -1` clauses joined by
+ * `||` — at module load, from the same array that documents the
+ * fragment list. Interpolating it into `CHECK_EXPRESSION` keeps
+ * the array as the single source of truth for which URL paths
+ * count as a login page; adding a fragment to the array is all a
+ * future change needs to do.
+ *
+ * `JSON.stringify` is used to quote each fragment rather than
+ * embedding it in a hand-written `'...'` because the stringify
+ * form escapes any character that would break the resulting JS
+ * string literal. The fragment values are hardcoded URL paths
+ * that cannot contain such characters today, but the defensive
+ * form costs nothing and does not rely on that invariant.
+ *
+ * The join separator `' ||\n      '` places each subsequent
+ * clause on its own line with the same six-space indentation the
+ * hand-written form used, so the emitted JavaScript reads the
+ * same way in a DevTools console or a log dump.
+ */
+const LOGIN_URL_JS_CHECK = LOGIN_URL_FRAGMENTS
+  .map(
+    (fragment) =>
+      `href.indexOf(${JSON.stringify(fragment)}) !== -1`
+  )
+  .join(' ||\n      ');
+
+/**
  * The HTTP timeout for the `/json/list` fetch, in milliseconds.
  * See the file header's "Timeouts" section for the reasoning.
  */
@@ -328,11 +361,7 @@ const CHECK_EXPRESSION = `
 
     var href = window.location.href;
     var isLoginUrl =
-      href.indexOf('/login') !== -1 ||
-      href.indexOf('/signin') !== -1 ||
-      href.indexOf('/sign_in') !== -1 ||
-      href.indexOf('/sign-in') !== -1 ||
-      href.indexOf('/auth/') !== -1;
+      ${LOGIN_URL_JS_CHECK};
 
     var bodyText = '';
     if (document.body && typeof document.body.innerText === 'string') {
