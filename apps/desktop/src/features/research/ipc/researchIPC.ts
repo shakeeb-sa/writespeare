@@ -376,6 +376,12 @@ const fetchTopicSourceCount = async (topicId: string): Promise<number> => {
  *   keywords  — the user's keywords. Optional; an empty or
  *               missing list means the search runs on the title
  *               alone.
+ *   timeRange — which time-range bucket this search invocation
+ *               is for. Required; one of `'anytime'`, `'year'`,
+ *               `'month'`, or `'week'`. The value is validated
+ *               below and passed through to the search service,
+ *               which forwards it to the Python script as the
+ *               `--time-range` argument.
  *
  * Returns:
  *
@@ -406,15 +412,11 @@ const handleSearch = async (
 
   // The timeRange argument identifies which time-range bucket
   // this search invocation is for. It is validated against the
-  // closed set the search service's `BucketKey` union declares.
-  //
-  // The value is NOT yet passed to `runSearch` — the search
-  // service's `SearchServiceOptions` interface does not accept a
-  // `timeRange` option in this session; adding that plumbing is
-  // PR-3 of the approved runbook. The handler accepts and
-  // validates the argument now so that the renderer's per-bucket
-  // call shape is stable across the PR boundary and so that an
-  // invalid value is rejected before any service call runs.
+  // closed set the search service's `BucketKey` union declares,
+  // and the validated value is passed through to `runSearch`
+  // (below), which forwards it to the Python script as the
+  // `--time-range` argument. An invalid value is rejected here,
+  // before any service call runs.
   if (!isBucketKey(timeRange)) {
     return {
       success: false,
@@ -469,6 +471,7 @@ const handleSearch = async (
     keywords: normalizedKeywords,
     maxResults,
     topicId: topicId.trim(),
+    timeRange,
   });
 
   // ---- Envelope ----

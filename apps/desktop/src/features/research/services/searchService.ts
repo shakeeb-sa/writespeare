@@ -122,13 +122,14 @@
  *     records; the `candidates.json` file is a per-topic cache
  *     that the research feature owns.
  *
- *   - It does not write `candidates.json` with more than one
- *     populated bucket in this session. The current search runs
- *     one query against one engine and returns one list; all of
- *     that list lands under the `anytime` bucket, and the other
- *     three buckets are empty. The bucketed-search feature (PR-3
- *     of the plan) changes this file to route each per-bucket
- *     search's result into its own slot.
+ *   - It does not write `candidates.json` as a whole. Each call
+ *     to `runSearch` writes one bucket's candidate list into the
+ *     topic's file, merging with whatever the file already held
+ *     for the other three buckets. A topic's file therefore
+ *     accumulates one bucket's worth of candidates per search
+ *     invocation, and the four buckets the renderer drives
+ *     (`researchStore.runFullSearch`) end up as four
+ *     independent result sets in the same file.
  *
  * Dependencies: Node stdlib + electron + the three sibling
  * services (`portAllocator` is used indirectly via
@@ -255,6 +256,16 @@ export interface SearchServiceOptions {
    *  marker so the renderer routes the candidates to the right
    *  store entry. */
   topicId: string;
+
+  /** Which time-range bucket this search invocation is for.
+   *  Defaults to `'anytime'`, which matches the Python side's
+   *  own default and therefore reproduces the pre-bucketed
+   *  behaviour when the caller does not supply a value. The
+   *  value is forwarded to the Python child as the
+   *  `--time-range` argument and — on success — determines
+   *  which slot of the topic's `candidates.json` the result is
+   *  written to. */
+  timeRange?: BucketKey;
 
   /** Which engine to try first. Defaults to `'google'`. */
   engine?: SearchEngine;
@@ -491,8 +502,81 @@ const getCandidatesPath = (topicId: string): string => {
 };
 
 /**
- * Write the candidate list to the topic's `candidates.json` file
- * in the `CandidatesByBucket` shape.
+ * Read the topic's `candidates.json` file and return its contents
+ * as a `CandidatesByBucket` record, or an empty record when the
+ * file does not exist, cannot be read, or cannot be parsed.
+ *
+ * The writer's merge step calls this to obtain "the three buckets
+ * I am NOT writing this time". A missing file (the first search
+ * for a topic), a malformed file (a hand-edit that broke the
+ * JSON), or a file whose top-level shape is not an object all
+ * collapse to the same empty record — from the writer's point of
+ * view, each is "there is nothing to preserve for the other
+ * buckets", and the correct behaviour for all three is to start
+ * from empty and write only the current bucket.
+ *
+ * Element-level shape of the individual candidates is NOT
+ * validated here. The file is written by `writeCandidatesFile`
+ * from `SearchCandidate[]` values that have already passed
+ * through `extractCandidates`'s runtime narrowing; re-validating
+ * on every read would duplicate that check for a file this same
+ * module owns and wrote. A future session that wanted defensive
+ * element validation would add it here, in one place, rather
+ * than at every read site.
+ *
+ * Never throws. Callers rely on the total-function contract; the
+ * merge in `writeCandidatesFile` cannot proceed with a partial
+ * record, and a throw from this helper would abort the write
+ * for a state the caller can handle just as well with an empty
+ * record.
+ */
+const readCandidatesFileOrEmpty = async (
+  topicId: string
+): Promise<CandidatesByBucket> => {
+  const empty: CandidatesByBucket = {
+    anytime: [],
+    year: [],
+    month: [],
+    week: [],
+  };
+
+  let raw: string;
+  try {
+    raw = await fs.readFile(getCandidatesPath(topicId), 'utf-8');
+  } catch {
+    return empty;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return empty;
+  }
+
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    Array.isArray(parsed)
+  ) {
+    return empty;
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  const asBucket = (value: unknown): SearchCandidate[] =>
+    Array.isArray(value) ? (value as SearchCandidate[]) : [];
+
+  return {
+    anytime: asBucket(obj['anytime']),
+    year: asBucket(obj['year']),
+    month: asBucket(obj['month']),
+    week: asBucket(obj['week']),
+  };
+};
+
+/**
+ * Write one bucket's candidate list into the topic's
+ * `candidates.json` file.
  *
  * The file is the persistence layer for the Sources tab: without
  * it, a returning visit to the topic would show an empty
@@ -500,10 +584,20 @@ const getCandidatesPath = (topicId: string): string => {
  * `research:getCandidates` IPC channel reads this file and
  * returns its contents to the renderer's `loadCandidates` action.
  *
- * In this session, all candidates land under the `anytime`
- * bucket and the other three buckets are empty — the bucketed
- * search does not exist yet. PR-3 of the plan changes this
- * helper to write into the bucket the search ran against.
+ * The writer merges. It reads whatever the file currently holds
+ * (via `readCandidatesFileOrEmpty`), replaces only the bucket
+ * the caller named, and writes the merged record back. This is
+ * what makes the four sequential per-bucket searches — the shape
+ * the research store drives via `researchStore.runFullSearch` —
+ * accumulate into a single file. Without the merge, the last
+ * bucket's write would clobber the first three, and a topic's
+ * reloaded candidate list would show only that last bucket's
+ * results, all under whichever key the last call named.
+ *
+ * The `bucket` argument must be one of the four `BucketKey`
+ * values. The caller (`runSearch`) supplies it from
+ * `options.timeRange`, defaulting to `'anytime'` when the caller
+ * did not specify one.
  *
  * The parent directory is created recursively before the write
  * so the first search on a fresh topic succeeds without a
@@ -513,16 +607,16 @@ const getCandidatesPath = (topicId: string): string => {
  */
 const writeCandidatesFile = async (
   topicId: string,
+  bucket: BucketKey,
   candidates: SearchCandidate[]
 ): Promise<void> => {
   const candidatesPath = getCandidatesPath(topicId);
   await fs.mkdir(path.dirname(candidatesPath), { recursive: true });
 
+  const existing = await readCandidatesFileOrEmpty(topicId);
   const record: CandidatesByBucket = {
-    anytime: candidates,
-    year: [],
-    month: [],
-    week: [],
+    ...existing,
+    [bucket]: candidates,
   };
 
   await fs.writeFile(
@@ -704,6 +798,13 @@ const attemptSearch = async (
     // operation's inputs, and the debug port. `--control-mode`
     // is always passed — the whole point of this operation is
     // the marker stream that goes back to the renderer.
+    //
+    // `--time-range` carries the bucket identifier the caller
+    // selected. When the caller supplied none, we pass the
+    // Python side's own default of `'anytime'` explicitly, so
+    // the flag is always present in the argv and the child's
+    // behaviour is visible in the spawn log rather than implied
+    // by an argparse default.
     const args: string[] = [
       'search',
       '--query', options.query,
@@ -712,6 +813,7 @@ const attemptSearch = async (
       '--topic-id', options.topicId,
       '--port', String(port),
       '--engine', engine,
+      '--time-range', options.timeRange ?? 'anytime',
       '--control-mode',
     ];
 
@@ -862,7 +964,11 @@ export const runSearch = async (
   // move on.
   if (finalResult.kind === 'success') {
     try {
-      await writeCandidatesFile(options.topicId, finalResult.candidates);
+      await writeCandidatesFile(
+        options.topicId,
+        options.timeRange ?? 'anytime',
+        finalResult.candidates
+      );
     } catch (err) {
       console.error(
         '[searchService] could not write candidates.json:',
