@@ -363,7 +363,26 @@ const TopicSchema = new Schema<TopicDocument>(
   {
     timestamps: true,
     toJSON: {
-      transform: (_doc, ret) => {
+      // The `ret: Record<string, unknown>` annotation is required
+      // for the `delete` below to type-check under strict
+      // TypeScript — the same reasoning as
+      // `features/auth/models/User.ts`'s `toJSON.transform`. See
+      // that file's comment for the full explanation. In short:
+      // Mongoose contextually types `ret` from the schema's
+      // document type (`TopicDocument`), whose `__v` field is
+      // non-optional, and TS 2790 rejects `delete` on a
+      // non-optional named property. Re-annotating `ret` as a
+      // string-keyed record changes the compiler's view of the
+      // value to "an open bag of keys", where `delete` on any
+      // key is allowed by the index-signature rule.
+      //
+      // The value type is `unknown` rather than `any`: the
+      // transform never reads the value before deleting, so it
+      // has no basis for claiming a type. No `as` cast is used.
+      transform: (
+        _doc,
+        ret: Record<string, unknown>
+      ) => {
         delete ret['__v'];
         return ret;
       },
