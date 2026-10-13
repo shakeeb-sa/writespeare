@@ -169,6 +169,22 @@ _SOURCES_SUBFOLDER = "sources"
 _ARTICLE_SUBFOLDER = "article"
 _REPORTS_SUBFOLDER = "reports"
 
+# The per-topic file that records URLs whose extraction failed.
+# Written by `research/extract_dispatch.py` at the end of a batch
+# that had at least one failure; read by the Electron main
+# process when the Sources tab loads. Named here so the writer
+# and the reader agree on the filename without either of them
+# hardcoding the string.
+_FAILURES_FILENAME = "failures.json"
+
+# The subfolder under the app slug that holds the user's prompt
+# templates. Lives at <appData>/writespeare/prompts/ — a sibling
+# of `topics/`, not a child. The two-folder model puts user
+# prompts here and the read-only built-in prompts under
+# <scripts>/prompts/, and `resolve_prompt_path` checks this
+# folder first so a user-supplied prompt shadows the built-in.
+_PROMPTS_SUBFOLDER = "prompts"
+
 
 # =============================================================================
 #  Path resolution
@@ -281,6 +297,36 @@ def get_reports_folder(topic_id: str) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 
+def get_failures_path(topic_id: str) -> Path:
+    """
+    Return the absolute path to a topic's `failures.json` file.
+
+    The file records URLs whose extraction failed, one record per
+    URL, with the reason code, the accumulated attempt count, the
+    timestamp of the most recent attempt, and the error message
+    from that attempt. It is written by
+    `research/extract_dispatch.py` at the end of every batch that
+    had at least one failure, and read by the Electron main
+    process when the Sources tab loads a topic.
+
+    The file lives at the topic's folder root, not inside a
+    subfolder — it is a property of the topic's whole extraction
+    history, not of any one batch or stage.
+
+    The file is NOT created by this function. A topic whose
+    extractions have all succeeded has no `failures.json`, and
+    the readers on both sides treat "file absent" and "empty
+    list" as equivalent. Callers that write the file call
+    `write_json_atomic(path, records)` on the return value of
+    this helper; callers that read it check `.exists()` first.
+
+    Args:
+        topic_id: The topic's folder name.
+
+    Returns:
+        `<appData>/writespeare/topics/<topic_id>/failures.json`
+    """
+    return get_topic_folder(topic_id) / _FAILURES_FILENAME
 
 def ensure_topic_folders(topic_id: str) -> None:
     """
@@ -305,6 +351,138 @@ def ensure_topic_folders(topic_id: str) -> None:
     log_debug(f"Ensured topic folders for '{topic_id}'")
 
 
+
+# =============================================================================
+#  Prompt path resolution
+# =============================================================================
+#
+#  The two-folder model the plan's Q5.1 decision establishes:
+#
+#    * Built-in prompts ship with the app, read-only, under
+#      <scripts>/prompts/ — the same folder `main.py` and the
+#      sibling `core/`, `research/`, `writer/`, and `validation/`
+#      packages live in.
+#
+#    * User prompts live under <appData>/writespeare/prompts/ —
+#      a sibling of `topics/`, outside the app's install tree so
+#      it survives an app upgrade.
+#
+#  `resolve_prompt_path` checks the user folder first. A user
+#  prompt whose name matches a built-in one shadows the built-in
+#  without destroying it: deleting the user's file reverts the
+#  resolution to the built-in on the next call. That is the
+#  behavior the plan's user journey describes.
+#
+#  The bundled folder's path is derived from this module's own
+#  position on disk — `core/file_io.py` is two levels below the
+#  scripts root, so `Path(__file__).parent.parent` is the scripts
+#  root and appending `prompts/` gives the bundled folder. No
+#  environment variable or CLI argument is involved: the bundled
+#  prompts are always next to the scripts that read them, in both
+#  the development tree and the packaged app's `extraResources`
+#  layout.
+
+def get_user_prompts_folder() -> Path:
+    """
+    Return the absolute path to the folder that holds the user's
+    prompt templates.
+
+    The folder is created if it does not exist — the first call
+    in a fresh installation is what materialises it, so a caller
+    that writes a new prompt file does not have to create the
+    parent first.
+
+    Returns:
+        `<appData>/writespeare/prompts/`
+
+    Note:
+        This function creates the folder as a side effect. A
+        caller that only wants to inspect whether the folder
+        exists does not need to worry — the folder's existence is
+        the default state of a working installation, and the
+        folder will need to exist the moment the user saves their
+        first prompt anyway.
+    """
+    folder = _app_data_root() / _APP_SLUG / _PROMPTS_SUBFOLDER
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def resolve_prompt_path(name: str) -> Path:
+    """
+    Resolve a prompt file name to an absolute path using the
+    two-folder lookup.
+
+    Lookup order:
+
+        1. `<appData>/writespeare/prompts/<name>` — the user's
+           own prompts. If this exists, it wins.
+        2. `<scripts>/prompts/<name>` — the built-in prompts that
+           ship with the app.
+
+    The user folder is checked first so a user-supplied prompt
+    shadows the built-in of the same name without destroying it;
+    deleting the user's file reverts the app to the built-in on
+    the next resolution.
+
+    Args:
+        name: The prompt file's name, e.g. `"default.md"` or
+              `"my-style.md"`. Must be a bare filename — see the
+              Raises section.
+
+    Returns:
+        The absolute path to the file that won the lookup.
+
+    Raises:
+        ValueError:
+            If `name` is empty, or contains a path separator
+            (`/` or `\\`), or contains a `..` segment. The
+            lookup is deliberately restricted to a single
+            filename inside one of the two folders — a caller
+            that passes a path is either confused or hostile,
+            and either way this function will not traverse
+            outside the two roots.
+        FileNotFoundError:
+            If neither folder contains a file with the given
+            name. The caller is expected to surface this as "the
+            prompt file could not be found" rather than silently
+            substituting a built-in — a user who assigned a
+            specific prompt to a topic and then deleted it needs
+            to see the error, not a silent fallback to a
+            different voice.
+    """
+    # ---- Reject names that would escape the two folders ----
+    # A name like `"../../etc/passwd"` would resolve outside both
+    # roots if it were joined blindly. The check below rejects
+    # any name that is not a plain filename. The `..` check is
+    # technically redundant with the separator check for a name
+    # like `"../foo"`, but a name like `".."` on its own has no
+    # separator and would still escape. Both checks are cheap.
+    if not name or "/" in name or "\\" in name or ".." in name:
+        raise ValueError(
+            f"Invalid prompt file name: {name!r}. Must be a bare "
+            f"filename with no path separators or '..' segments."
+        )
+
+    # ---- Folder 1: the user's prompts ----
+    user_candidate = get_user_prompts_folder() / name
+    if user_candidate.is_file():
+        return user_candidate
+
+    # ---- Folder 2: the bundled prompts ----
+    bundled_candidate = (
+        Path(__file__).resolve().parent.parent
+        / _PROMPTS_SUBFOLDER
+        / name
+    )
+    if bundled_candidate.is_file():
+        return bundled_candidate
+
+    raise FileNotFoundError(
+        f"Prompt file {name!r} was not found in either the user "
+        f"prompts folder ({get_user_prompts_folder()}) or the "
+        f"bundled prompts folder."
+    )
 # =============================================================================
 #  Atomic writes
 # =============================================================================
@@ -762,7 +940,11 @@ __all__ = [
     "get_sources_folder",
     "get_article_folder",
     "get_reports_folder",
+    "get_failures_path",
     "ensure_topic_folders",
+    # prompt path helpers
+    "get_user_prompts_folder",
+    "resolve_prompt_path",
     # atomic writes
     "write_text_atomic",
     "write_json_atomic",

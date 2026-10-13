@@ -119,8 +119,14 @@ What this module does NOT do:
       If the session has expired, DeepSeek's own UI shows a
       login wall, and this script detects it (see
       `_detect_login_wall`) and calls `manual_action_required`
-      so the user can log back in once via the same one-time
-      flow.
+      up to `MAX_LOGIN_RETRIES` times — the user signs in by
+      hand, clicks Continue, and the script re-checks. If the
+      wall is still present after every attempt, the script
+      emits a `WRITER_DONE` marker carrying
+      `reason: "login_abandoned"` and exits with
+      `EXIT_LOGIN_ABANDONED` (102) so the desktop can tell
+      "user gave up on the login" apart from "login succeeded
+      but the writer failed for another reason".
 
     * It does not detect captchas on DeepSeek's own domain. The
       plan's user journey does not show DeepSeek presenting
@@ -173,6 +179,7 @@ from core.file_io import (
     read_doc,
     read_prompt_template,
     render_prompt,
+    resolve_prompt_path,
     write_text_atomic,
 )
 from core.utils import (
@@ -281,6 +288,36 @@ RESPONSE_APPEAR_TIMEOUT_SECONDS = 90
 # stop entirely when the response is done.
 RESPONSE_STABLE_CHECKS_REQUIRED = 3
 RESPONSE_STABLE_POLL_SECONDS = 1.0
+
+# The maximum number of times the writer will re-prompt the user
+# to sign in to DeepSeek before giving up.
+#
+# Each iteration of the login-wall loop calls
+# `manual_action_required`, waits for the user to click Continue,
+# then re-checks the wall. Three attempts is enough to absorb a
+# mistyped password, a slow SPA transition, or a session cookie
+# that needed a moment to settle — without letting a confused
+# user get stuck in a longer loop when the real problem is that
+# their account needs attention outside this app.
+MAX_LOGIN_RETRIES = 3
+
+# The exit code the writer uses when the user has clicked Continue
+# on the DeepSeek login prompt `MAX_LOGIN_RETRIES` times without
+# the session actually becoming live.
+#
+# Distinct from `EXIT_SKIPPED` (99), `EXIT_STOPPED` (100), and
+# `EXIT_CAPTCHA_SKIP` (101), all of which come from
+# `core.output`. The value is defined locally rather than in
+# `core.output` because it is a writer-stage-specific condition —
+# no other pipeline stage has a login flow to abandon — and
+# because adding it to `core.output` would expand that module's
+# exit-code vocabulary for a reason that only one caller cares
+# about. `main.py`'s existing non-zero classifier treats 102 the
+# same as any other failure, which is the correct behavior: the
+# run failed. The distinctness is what the marker channel
+# carries to the desktop, so the desktop can classify it more
+# precisely than the exit code alone would allow.
+EXIT_LOGIN_ABANDONED = 102
 
 # =============================================================================
 #  Internal: chat-input resolver
@@ -815,10 +852,16 @@ def run_write(
                       explicitly so a caller can override the
                       default without changing this function.
         prompt_file – The name of the prompt template to render.
-                      The path is resolved relative to the
-                      scripts folder's `prompts/` subdirectory —
-                      `default.md` refers to
-                      `<scripts>/prompts/default.md`.
+                      Resolved via
+                      `core.file_io.resolve_prompt_path`, which
+                      implements the plan's two-folder model
+                      (Q5.1): the user's prompts folder
+                      (`<appData>/writespeare/prompts/`) is
+                      checked first, and the bundled prompts
+                      folder (`<scripts>/prompts/`) is the
+                      fallback. A user-supplied prompt whose
+                      name matches a built-in shadows it
+                      without destroying it.
         port        – The Chrome CDP debug port to connect to.
     """
     # ---- Validation ----
@@ -836,13 +879,28 @@ def run_write(
         log_error(f"write: no .md files found in {docs_dir}")
         return 1
 
-    # The prompt file is passed as a name (e.g. "default.md"); the
-    # full path is resolved against the scripts folder's prompts
-    # subdirectory. This matches the convention the plan's file
-    # tree uses (prompts/default.md, prompts/seo-focused.md, etc.).
-    prompt_path = _SCRIPTS_ROOT / "prompts" / prompt_file
-    if not prompt_path.is_file():
-        log_error(f"write: prompt template not found: {prompt_path}")
+    # The prompt file is passed as a bare name (e.g. "default.md").
+    # `resolve_prompt_path` implements the plan's two-folder model
+    # (Q5.1): the user's prompts at <appData>/writespeare/prompts/
+    # are checked first, and the bundled prompts at
+    # <scripts>/prompts/ are the fallback. A user-supplied prompt
+    # whose name matches a built-in shadows it without destroying
+    # it; deleting the user's file reverts to the built-in.
+    #
+    # The helper raises two exception types, both of which are
+    # treated here as fatal. `FileNotFoundError` means the name
+    # exists in neither folder — a user who assigned a prompt to
+    # a topic and then deleted it needs to see the error, not a
+    # silent fallback. `ValueError` means the name itself is
+    # invalid (empty, or containing a path separator or a `..`
+    # segment) — a caller-side bug that deserves a clear message.
+    try:
+        prompt_path = resolve_prompt_path(prompt_file)
+    except FileNotFoundError as exc:
+        log_error(f"write: prompt template not found: {exc}")
+        return 1
+    except ValueError as exc:
+        log_error(f"write: invalid prompt file name: {exc}")
         return 1
 
     # Read the prompt template now so that a malformed file
@@ -912,8 +970,8 @@ def run_write(
 
     # ---- Check for a login wall ----
     # If the user's session has expired, DeepSeek redirects to a
-    # login page rather than the chat. Block for the user to log
-    # back in once.
+    # login page rather than the chat. The loop below re-prompts
+    # the user up to `MAX_LOGIN_RETRIES` times.
     #
     # The initial settle time is 2.5 seconds rather than 1.5.
     # DeepSeek's SPA takes a moment to decide whether the session
@@ -922,36 +980,73 @@ def run_write(
     # mid-redirect, when neither the chat textarea nor the login
     # button is yet present. The longer wait eliminates that
     # race without adding meaningful latency to the normal path.
+    #
+    # The retry loop exists because a single Continue click is not
+    # always a real sign-in. The user might have missed the
+    # prompt, might have clicked Continue before finishing the
+    # login, or might be dealing with a slow page transition.
+    # Re-prompting gives them a second and third chance with a
+    # clear message each time, and hard-failing after the third
+    # attempt keeps the writer from looping forever on a user who
+    # cannot (or will not) sign in. The distinct exit code and the
+    # `reason: "login_abandoned"` marker field are what let the
+    # desktop classify this as "user gave up on login" rather than
+    # as a generic writer failure — see the plan's C7 decision and
+    # PR-7's manifest entry.
     time.sleep(2.5)
     if _detect_login_wall(page):
         log_warning(
             "DeepSeek is showing a login wall — waiting for the "
             "user to sign in."
         )
-        manual_action_required(
-            site="deepseek",
-            step="login",
-            prompt=(
-                "DeepSeek needs you to sign in. Log in in the "
-                "Chrome window, wait for the chat to load, then "
-                "click Continue."
-            ),
-        )
 
-        # After Continue, give the SPA a moment to transition from
-        # the login page to the chat. Then re-check the wall. If
-        # it is still present, the user clicked Continue without
-        # actually completing the sign-in — a diagnostic message
-        # here is far more useful to them than the generic
-        # "Chat input did not appear" failure that would
-        # otherwise follow.
-        time.sleep(3.0)
-        if _detect_login_wall(page):
+        # `for...else`: the `else` branch runs when the loop
+        # completes without hitting a `break`. A successful
+        # sign-in breaks out of the loop and skips the hard-fail
+        # branch below. Three Continue clicks without a live
+        # session exhaust the range and fall through to the
+        # `else`, which emits the abandonment marker and exits.
+        for attempt in range(1, MAX_LOGIN_RETRIES + 1):
+            manual_action_required(
+                site="deepseek",
+                step="login",
+                prompt=(
+                    f"DeepSeek needs you to sign in "
+                    f"(attempt {attempt} of {MAX_LOGIN_RETRIES}). "
+                    f"Log in in the Chrome window, wait for the "
+                    f"chat to load, then click Continue."
+                ),
+            )
+
+            # After Continue, give the SPA a moment to transition
+            # from the login page to the chat. Then re-check the
+            # wall.
+            time.sleep(3.0)
+
+            if not _detect_login_wall(page):
+                log_info(
+                    f"DeepSeek session is live after attempt "
+                    f"{attempt} of {MAX_LOGIN_RETRIES}."
+                )
+                break
+
+            log_warning(
+                f"Login wall still present after attempt "
+                f"{attempt} of {MAX_LOGIN_RETRIES}."
+            )
+        else:
+            # Every attempt was exhausted without a successful
+            # sign-in. The marker carries `reason:
+            # "login_abandoned"` so the desktop's writer store
+            # can distinguish this outcome from a login that
+            # succeeded but was followed by a writer error. The
+            # exit code is distinct (102) for the same reason at
+            # the process level. Both are emitted before the
+            # process exits so neither signal is lost.
             log_error(
-                "Login wall still present after Continue. The "
-                "DeepSeek sign-in was not completed — please log "
-                "in in the Chrome window and click Continue only "
-                "after the chat interface is visible."
+                f"DeepSeek sign-in was not completed after "
+                f"{MAX_LOGIN_RETRIES} attempts. The writer "
+                f"cannot proceed without a live session."
             )
             emit_marker(
                 MARKER_WRITER_DONE,
@@ -959,9 +1054,10 @@ def run_write(
                     "topicId": topic_id,
                     "articlePath": "",
                     "wordCount": 0,
+                    "reason": "login_abandoned",
                 },
             )
-            return 1
+            sys.exit(EXIT_LOGIN_ABANDONED)
 
     # ---- Wait for the chat input ----
     # The resolver tries the full selector chain immediately. If

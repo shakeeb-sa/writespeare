@@ -135,10 +135,15 @@ import {
   runExport,
   type ExportFormat,
 } from '../services/exportService.js';
+import { runBundle } from '../services/bundleService.js';
+import { renderReportMarkdown } from '../services/reportRenderer.js';
 import { apiGet } from '../../shared/api/client.js';
 import type {
   ApiResponse,
   Article,
+  Report,
+  Topic,
+  UserSetting,
 } from '../../shared/types/index.js';
 
 // ============================================================
@@ -155,6 +160,9 @@ import type {
 const CHANNEL_DOCX = 'export:docx';
 const CHANNEL_MD = 'export:md';
 const CHANNEL_TXT = 'export:txt';
+const CHANNEL_BUNDLE = 'export:bundle';
+const CHANNEL_REPORT = 'export:report';
+const CHANNEL_SOURCES = 'export:sources';
 
 // ============================================================
 //  Layout constants
@@ -167,7 +175,9 @@ const CHANNEL_TXT = 'export:txt';
 const APP_SLUG = 'writespeare';
 const TOPICS_SUBFOLDER = 'topics';
 const ARTICLE_SUBFOLDER = 'article';
+const REPORTS_SUBFOLDER = 'reports';
 const MARKDOWN_EXTENSION = '.md';
+const JSON_EXTENSION = '.json';
 
 // ============================================================
 //  Helpers — path computation
@@ -221,6 +231,84 @@ const findLatestDraft = async (
     return null;
   }
   return path.join(articleFolder, last);
+};
+
+/**
+ * Return the absolute path to a topic's `reports/` folder.
+ */
+const getReportsFolder = (topicId: string): string => {
+  return path.join(
+    app.getPath('appData'),
+    APP_SLUG,
+    TOPICS_SUBFOLDER,
+    topicId,
+    REPORTS_SUBFOLDER
+  );
+};
+
+/**
+ * Return the absolute path to the latest `.json` report in a
+ * topic's `reports/` folder, or `null` when the folder is
+ * missing or contains no `.json` file.
+ *
+ * Same "lexically greatest filename wins" logic as
+ * `findLatestDraft` above — the validation runner writes report
+ * files with zero-padded numeric suffixes, so the lexically
+ * greatest filename is the most recent report.
+ */
+const findLatestReport = async (
+  topicId: string
+): Promise<string | null> => {
+  const reportsFolder = getReportsFolder(topicId);
+
+  let entries: string[];
+  try {
+    entries = await fs.readdir(reportsFolder);
+  } catch {
+    return null;
+  }
+
+  const reports = entries
+    .filter((name) => name.endsWith(JSON_EXTENSION))
+    .sort();
+
+  if (reports.length === 0) {
+    return null;
+  }
+
+  const last = reports[reports.length - 1];
+  if (last === undefined) {
+    return null;
+  }
+  return path.join(reportsFolder, last);
+};
+
+/**
+ * Fetch the current user's settings from the backend.
+ *
+ * Returns the `UserSettingsMap` embedded in the `UserSetting`
+ * document, or `null` when the fetch fails for any reason. The
+ * `null` case is what every caller falls back on — a bundle
+ * export whose settings could not be loaded degrades to the
+ * "ask the user" behavior rather than failing the download.
+ *
+ * The endpoint is the settings feature's own `GET /settings`,
+ * which the backend's settings controller upserts on first read
+ * — so a user who has never touched their settings still gets a
+ * valid document with the schema's defaults.
+ */
+const fetchUserSettings = async (): Promise<
+  UserSetting['settings'] | null
+> => {
+  try {
+    const result = await apiGet<UserSetting>('/settings');
+    if (result.success && result.data) {
+      return result.data.settings;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 };
 
 // ============================================================
@@ -292,6 +380,38 @@ interface DialogConfig {
 }
 
 /**
+ * The `options` argument accepted by the `export:bundle` channel.
+ *
+ * The renderer's `DownloadBundleModal` builds one of these from
+ * its checkbox list and passes it through the preload's
+ * `export.bundle(topicId, options)` call. Every flag is
+ * optional; an omitted flag defaults to `true` — a caller that
+ * wants the full bundle passes no options at all.
+ *
+ * The shape mirrors the checkbox list the modal renders
+ * (Q3.1 / C2): Article, Sources, Report, Prompt used, Preset
+ * used, Topic metadata.
+ */
+export interface BundleChannelOptions {
+  include?: {
+    /** The generated article Markdown. Defaults to true. */
+    article?: boolean;
+    /** The extracted source documents. Defaults to true. */
+    sources?: boolean;
+    /** The validation report (JSON + rendered Markdown).
+     *  Defaults to true. */
+    report?: boolean;
+    /** The prompt file the writer used. Defaults to true. */
+    prompt?: boolean;
+    /** The preset the topic snapshotted. Defaults to true. */
+    preset?: boolean;
+    /** The topic's own metadata (title, keywords, status).
+     *  Defaults to true. */
+    metadata?: boolean;
+  };
+}
+
+/**
  * Open a native Save-As dialog with the article's title as the
  * default filename, and return the user's chosen path — or
  * `null` when the dialog was cancelled.
@@ -310,11 +430,12 @@ interface DialogConfig {
  */
 const promptForOutputPath = async (
   config: DialogConfig,
-  articleTitle: string
+  articleTitle: string,
+  baseDir?: string
 ): Promise<string | null> => {
   const slug = slugifyTitle(articleTitle);
   const defaultPath = path.join(
-    app.getPath('documents'),
+    baseDir ?? app.getPath('documents'),
     `${slug}.${config.extension}`
   );
 
@@ -491,6 +612,378 @@ const handleExport = async (
 };
 
 // ============================================================
+//  Bundle, report, and sources handlers (PR-5)
+// ============================================================
+//
+//  The three handlers below back the topic-level export
+//  affordances introduced by PR-5:
+//
+//    export:bundle   — the full topic archive. The renderer's
+//                      DownloadBundleModal collects the include
+//                      list and passes it through this channel.
+//                      The handler resolves the output path
+//                      (Save-As dialog or the user's configured
+//                      default), calls `runBundle` from
+//                      bundleService, and returns the path.
+//
+//    export:report   — a one-file shortcut that reads the
+//                      topic's latest report JSON, renders it
+//                      to Markdown via reportRenderer, and
+//                      writes the result to the resolved path.
+//
+//    export:sources  — a one-file shortcut that runs the bundle
+//                      machinery with only the sources artifact
+//                      enabled, producing a sources-only ZIP.
+//
+//  All three respect the user's bundle download settings
+//  (`bundleDownloadMode`, `bundleDownloadPath`). Mode `'ask'`
+//  opens a Save-As dialog; mode `'default'` writes silently to
+//  the configured folder. A failed settings fetch falls back to
+//  `'ask'` — the safe behavior, and the one the user can act on.
+
+/**
+ * Resolve the output path for a bundle-family download.
+ *
+ * Centralizes the settings-driven branch shared by the three
+ * handlers below:
+ *
+ *   * `'default'` mode with a non-empty path — write silently
+ *     to `<bundleDownloadPath>/<slug>.<extension>`. No dialog.
+ *   * `'ask'` mode (or a missing / unreadable settings document)
+ *     — open a Save-As dialog rooted at the user's Documents
+ *     folder (or at `bundleDownloadPath` when the user has set
+ *     one but chosen to ask).
+ *
+ * Returns the resolved path, or `null` when the user cancelled
+ * the dialog. Never throws — a dialog failure is surfaced
+ * through the handlers' own try/catch, not here.
+ */
+const resolveBundleOutputPath = async (
+  topicTitle: string,
+  extension: string,
+  filterLabel: string,
+  dialogTitle: string
+): Promise<string | null> => {
+  const settings = await fetchUserSettings();
+
+  const mode = settings?.bundleDownloadMode ?? 'ask';
+  const configuredPath = settings?.bundleDownloadPath ?? '';
+  const hasConfiguredPath = configuredPath.length > 0;
+
+  if (mode === 'default' && hasConfiguredPath) {
+    const slug = slugifyTitle(topicTitle);
+    return path.join(configuredPath, `${slug}.${extension}`);
+  }
+
+  // Either the user chose "ask", or the settings could not be
+  // read, or the "default" mode has no path configured. Open a
+  // dialog with a sensible starting directory.
+  const baseDir = hasConfiguredPath
+    ? configuredPath
+    : app.getPath('documents');
+
+  return promptForOutputPath(
+    { title: dialogTitle, extension, filterLabel },
+    topicTitle,
+    baseDir
+  );
+};
+
+/**
+ * Handle the `export:bundle` channel.
+ *
+ * Arguments sent by the renderer:
+ *
+ *   topicId  — the topic whose bundle is being downloaded.
+ *   options  — a `BundleChannelOptions` object naming which
+ *              artifacts to include. Omitted flags default to
+ *              true, so an empty options object produces the
+ *              full bundle.
+ *
+ * Returns the absolute path the ZIP was written to, or `null`
+ * when the user cancelled the Save-As dialog.
+ */
+const handleBundle = async (
+  _event: IpcMainInvokeEvent,
+  topicId: unknown,
+  options: unknown
+): Promise<ApiResponse<string | null>> => {
+  // ---- Validate topicId ----
+  if (typeof topicId !== 'string' || topicId.trim().length === 0) {
+    return { success: false, error: 'topicId is required.' };
+  }
+  const trimmedTopicId = topicId.trim();
+
+  // ---- Validate options ----
+  // The options argument may be omitted entirely (the preload
+  // passes `undefined`) or may be a partial object. Anything
+  // else — a string, a number, an array — is a malformed call.
+  let parsed: BundleChannelOptions = {};
+  if (options !== undefined && options !== null) {
+    if (typeof options !== 'object' || Array.isArray(options)) {
+      return {
+        success: false,
+        error: 'options must be an object when provided.',
+      };
+    }
+    parsed = options as BundleChannelOptions;
+  }
+  // Every flag defaults to true. `!== false` (rather than
+  // `=== true`) is what makes "omitted" and "explicitly true"
+  // both resolve to true, and only "explicitly false" turn an
+  // artifact off.
+  const include = {
+    article: parsed.include?.article !== false,
+    sources: parsed.include?.sources !== false,
+    report: parsed.include?.report !== false,
+    prompt: parsed.include?.prompt !== false,
+    preset: parsed.include?.preset !== false,
+    metadata: parsed.include?.metadata !== false,
+  };
+
+  // ---- Fetch the topic (for the default filename slug) ----
+  const topicResult = await apiGet<Topic>(
+    `/topics/${encodeURIComponent(trimmedTopicId)}`
+  );
+  if (!topicResult.success || !topicResult.data) {
+    return {
+      success: false,
+      error: topicResult.error ?? 'The topic could not be found.',
+    };
+  }
+  const topicTitle = topicResult.data.title;
+
+  // ---- Resolve the output path ----
+  let outputPath: string | null;
+  try {
+    outputPath = await resolveBundleOutputPath(
+      topicTitle,
+      'zip',
+      'ZIP Archive',
+      'Save topic bundle'
+    );
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: `Could not open the Save-As dialog: ${message}`,
+    };
+  }
+  if (outputPath === null) {
+    return { success: true, data: null };
+  }
+
+  // ---- Run the bundle ----
+  let result;
+  try {
+    result = await runBundle({
+      topicId: trimmedTopicId,
+      outputPath,
+      include,
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: `Bundle export failed: ${message}`,
+    };
+  }
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error ?? 'Bundle export failed.',
+    };
+  }
+
+  return {
+    success: true,
+    data: result.outputPath ?? outputPath,
+  };
+};
+
+/**
+ * Handle the `export:report` channel.
+ *
+ * Reads the topic's latest validation report JSON, renders it to
+ * Markdown via `reportRenderer`, and writes the result to the
+ * user's chosen (or configured default) path. The Markdown
+ * format matches what the bundle embeds for the report artifact
+ * — one implementation, two uses.
+ */
+const handleReport = async (
+  _event: IpcMainInvokeEvent,
+  topicId: unknown
+): Promise<ApiResponse<string | null>> => {
+  if (typeof topicId !== 'string' || topicId.trim().length === 0) {
+    return { success: false, error: 'topicId is required.' };
+  }
+  const trimmedTopicId = topicId.trim();
+
+  // ---- Locate the latest report JSON ----
+  const reportPath = await findLatestReport(trimmedTopicId);
+  if (reportPath === null) {
+    return {
+      success: false,
+      error:
+        'No validation report was found on disk for this topic. ' +
+        'Run validation first, then download the report.',
+    };
+  }
+
+  // ---- Read and parse ----
+  let report: Report;
+  try {
+    const raw = await fs.readFile(reportPath, 'utf-8');
+    report = JSON.parse(raw) as Report;
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: `Could not read the validation report: ${message}`,
+    };
+  }
+
+  // ---- Fetch the topic for the default filename slug ----
+  const topicResult = await apiGet<Topic>(
+    `/topics/${encodeURIComponent(trimmedTopicId)}`
+  );
+  if (!topicResult.success || !topicResult.data) {
+    return {
+      success: false,
+      error: topicResult.error ?? 'The topic could not be found.',
+    };
+  }
+  const topicTitle = topicResult.data.title;
+
+  // ---- Resolve the output path ----
+  let outputPath: string | null;
+  try {
+    outputPath = await resolveBundleOutputPath(
+      `${topicTitle}-report`,
+      'md',
+      'Markdown',
+      'Save validation report'
+    );
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: `Could not open the Save-As dialog: ${message}`,
+    };
+  }
+  if (outputPath === null) {
+    return { success: true, data: null };
+  }
+
+  // ---- Render and write ----
+  try {
+    const markdown = renderReportMarkdown(report);
+    await fs.writeFile(outputPath, markdown, 'utf-8');
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: `Report export failed: ${message}`,
+    };
+  }
+
+  return { success: true, data: outputPath };
+};
+
+/**
+ * Handle the `export:sources` channel.
+ *
+ * A one-file shortcut that runs the bundle machinery with only
+ * the sources artifact enabled, producing a sources-only ZIP.
+ * The output path follows the same settings-driven rule as the
+ * full bundle download.
+ */
+const handleSources = async (
+  _event: IpcMainInvokeEvent,
+  topicId: unknown
+): Promise<ApiResponse<string | null>> => {
+  if (typeof topicId !== 'string' || topicId.trim().length === 0) {
+    return { success: false, error: 'topicId is required.' };
+  }
+  const trimmedTopicId = topicId.trim();
+
+  // ---- Fetch the topic for the default filename slug ----
+  const topicResult = await apiGet<Topic>(
+    `/topics/${encodeURIComponent(trimmedTopicId)}`
+  );
+  if (!topicResult.success || !topicResult.data) {
+    return {
+      success: false,
+      error: topicResult.error ?? 'The topic could not be found.',
+    };
+  }
+  const topicTitle = topicResult.data.title;
+
+  // ---- Resolve the output path ----
+  let outputPath: string | null;
+  try {
+    outputPath = await resolveBundleOutputPath(
+      `${topicTitle}-sources`,
+      'zip',
+      'ZIP Archive',
+      'Save sources archive'
+    );
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: `Could not open the Save-As dialog: ${message}`,
+    };
+  }
+  if (outputPath === null) {
+    return { success: true, data: null };
+  }
+
+  // ---- Run the bundle with only sources enabled ----
+  let result;
+  try {
+    result = await runBundle({
+      topicId: trimmedTopicId,
+      outputPath,
+      include: {
+        article: false,
+        sources: true,
+        report: false,
+        prompt: false,
+        preset: false,
+        metadata: false,
+      },
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: `Sources export failed: ${message}`,
+    };
+  }
+
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error ?? 'Sources export failed.',
+    };
+  }
+
+  return {
+    success: true,
+    data: result.outputPath ?? outputPath,
+  };
+};
+
+// ============================================================
 //  registerExportIPC
 // ============================================================
 
@@ -548,6 +1041,44 @@ export const registerExportIPC = (): void => {
         extension: 'txt',
         filterLabel: 'Plain Text',
       })
+  );
+
+  // ---- export:bundle ----
+  // The topic-level archive. The options argument carries the
+  // DownloadBundleModal's per-artifact include list; see the
+  // `BundleChannelOptions` interface for its shape.
+  ipcMain.handle(
+    CHANNEL_BUNDLE,
+    async (
+      event: IpcMainInvokeEvent,
+      topicId: unknown,
+      options: unknown
+    ): Promise<ApiResponse<string | null>> =>
+      handleBundle(event, topicId, options)
+  );
+
+  // ---- export:report ----
+  // One-file shortcut: the topic's latest validation report
+  // rendered to Markdown.
+  ipcMain.handle(
+    CHANNEL_REPORT,
+    async (
+      event: IpcMainInvokeEvent,
+      topicId: unknown
+    ): Promise<ApiResponse<string | null>> =>
+      handleReport(event, topicId)
+  );
+
+  // ---- export:sources ----
+  // One-file shortcut: a ZIP containing only the topic's
+  // extracted sources.
+  ipcMain.handle(
+    CHANNEL_SOURCES,
+    async (
+      event: IpcMainInvokeEvent,
+      topicId: unknown
+    ): Promise<ApiResponse<string | null>> =>
+      handleSources(event, topicId)
   );
 };
 

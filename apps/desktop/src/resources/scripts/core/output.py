@@ -199,6 +199,100 @@ def emit_marker(marker_type: str, payload: dict) -> None:
 
 
 # =============================================================================
+#  Public: search-stage emit helpers
+# =============================================================================
+#
+#  The SEARCH_PROGRESS and SEARCH_RESULT markers carry a `timeRange`
+#  field so the renderer can route each bucket's progress and each
+#  bucket's candidate list to its own slot in the research store.
+#  Without that field, a four-bucket search would produce four
+#  progress markers and four result markers with no way for the
+#  renderer to tell which bucket each one belonged to.
+#
+#  These two helpers exist so that the payload shape for the two
+#  search markers is defined in exactly one place — the same module
+#  that owns the marker type constants and the marker emission
+#  mechanism. A search script calls `emit_search_progress(...)` and
+#  `emit_search_result(...)` rather than calling `emit_marker(...)`
+#  with a hand-built payload, which is what guarantees no caller can
+#  ever emit a search marker without the `timeRange` field.
+#
+#  The `time_range` argument is a plain string — one of "anytime",
+#  "year", "month", "week". Validation of that set lives at the
+#  boundary where the value is decided (main.py's argparse for the
+#  `--time-range` flag); these helpers forward the value verbatim,
+#  matching the existing division of concerns in this module.
+
+def emit_search_progress(
+    topic_id: str,
+    time_range: str,
+    page: int,
+    found: int,
+    requested: int,
+) -> None:
+    """
+    Emit a SEARCH_PROGRESS marker for one page of one search bucket.
+
+    Payload shape (mirrors the renderer's `narrowSearchProgress`):
+
+        {
+            "topicId":   <topic ID>,
+            "timeRange": "anytime" | "year" | "month" | "week",
+            "page":      <1-based page index>,
+            "found":     <candidates found so far>,
+            "requested": <target count for this bucket>,
+        }
+
+    The `time_range` value is the identifier the search script was
+    invoked with — see `main.py`'s `--time-range` argument for the
+    authoritative list. The helper does not validate the value; a
+    bad value would be a bug in the caller, and the renderer's
+    `readTimeRange` narrowing already drops unknown values safely.
+    """
+    emit_marker(MARKER_SEARCH_PROGRESS, {
+        "topicId": topic_id,
+        "timeRange": time_range,
+        "page": page,
+        "found": found,
+        "requested": requested,
+    })
+
+
+def emit_search_result(
+    topic_id: str,
+    time_range: str,
+    candidates: list,
+) -> None:
+    """
+    Emit a SEARCH_RESULT marker for one search bucket's final list.
+
+    Payload shape (mirrors the renderer's `narrowCandidates`):
+
+        {
+            "topicId":    <topic ID>,
+            "timeRange":  "anytime" | "year" | "month" | "week",
+            "candidates": [
+                {"url": ..., "title": ..., "snippet": ..., "platform": ...},
+                ...
+            ],
+        }
+
+    `candidates` is a list of dicts; each dict carries the four
+    fields the renderer expects (url, title, snippet, platform).
+    The helper forwards the list verbatim — validating the inner
+    shape belongs to the extractors that produced it.
+    """
+    emit_marker(MARKER_SEARCH_RESULT, {
+        "topicId": topic_id,
+        "timeRange": time_range,
+        "candidates": candidates,
+    })
+
+
+    
+
+
+# =============================================================================
 #  Internal: read one command line from stdin
 # =============================================================================
 
@@ -446,6 +540,9 @@ __all__ = [
     "is_control_mode",
     # marker emission
     "emit_marker",
+    # search-stage emit helpers
+    "emit_search_progress",
+    "emit_search_result",
     # user interaction
     "manual_action_required",
     "captcha_required",

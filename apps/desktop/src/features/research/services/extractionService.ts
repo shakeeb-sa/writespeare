@@ -119,12 +119,30 @@
  *     This module's job ends when the child process has exited
  *     and the markers have been broadcast.
  *
- *   - It does not retry failed URLs. The Python extractor's
- *     `EXTRACT_PROGRESS` marker reports per-URL status, and a
- *     failed URL stays failed for the batch. The user can retry
- *     it by running the extraction again with that URL alone —
- *     a natural flow the renderer supports by letting the user
- *     re-check a subset of the candidate list.
+ *   - It does not retry failed URLs, and it does not read the
+ *     failures file. During a batch, the Python extractor's
+ *     `EXTRACT_PROGRESS` marker reports per-URL status. After
+ *     the batch, `research/extract_dispatch.py` writes the
+ *     topic's `failures.json` with a record per failed URL
+ *     carrying the reason code, the accumulated attempt count,
+ *     the last attempt's timestamp, and the error message.
+ *
+ *     This service does NOT read that file. The renderer's
+ *     `researchStore.loadCandidates` action fetches the
+ *     records via the separate `research:getFailures` IPC
+ *     channel (`handleGetFailures` in `researchIPC.ts`) on the
+ *     next open of the topic. The retry flow —
+ *     `researchStore.retryFailed` invoking `research:extract`
+ *     with the failed URLs — reaches this same `runExtract`
+ *     entry point without knowing that the URLs came from a
+ *     previous batch's failures.
+ *
+ *     The separation is deliberate. This service is stateless
+ *     with respect to past runs: a corrupted or missing
+ *     `failures.json` cannot affect a fresh extraction, and
+ *     the retry UI's source of truth is the same file the
+ *     Python side writes, not a copy cached in the main
+ *     process.
  *
  *   - It does not filter or validate the URLs beyond the shallow
  *     shape checks in `runExtract` (non-empty array, non-empty

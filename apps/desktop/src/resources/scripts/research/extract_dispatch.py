@@ -132,9 +132,10 @@ package + the sibling `research/extract_*.py` modules (imported
 lazily — see the "Lazy imports" note in the code below).
 """
 
+import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 from urllib.parse import urlparse
 
 from playwright.sync_api import Page
@@ -168,6 +169,8 @@ from core.file_io import (
     ensure_topic_folders,
     write_doc,
     utc_now_iso,
+    get_failures_path,
+    write_json_atomic,
 )
 from core.utils import (
     log_info,
@@ -197,6 +200,82 @@ DOMAIN_TO_PLATFORM: dict[str, str] = {
     "twitter.com": "twitter",
     "x.com": "twitter",
 }
+
+# -----------------------------------------------------------------------------
+#  Failure reason codes
+# -----------------------------------------------------------------------------
+# The `reason` field of a record in failures.json. Short, stable
+# slugs the renderer can map to a human-readable explanation.
+#
+# The set is deliberately small. Each code corresponds to a
+# distinct condition the dispatcher can actually distinguish:
+#
+#   extractor_error  — the extractor raised an exception (a
+#                      Playwright timeout, a navigation error, a
+#                      bug in the extractor). The exception's
+#                      message is carried in `errorMessage`.
+#   no_result        — the extractor returned None without
+#                      raising. The extractor's own contract
+#                      does not distinguish between "the page
+#                      had no content" and "the extractor gave
+#                      up" — both are None — so the dispatcher
+#                      cannot be more specific than this.
+#   invalid_result   — the extractor returned something other
+#                      than a dict or None. A contract violation,
+#                      always a bug.
+#   empty_content    — the extractor returned a dict with an
+#                      empty (or whitespace-only) `content`
+#                      field. There is nothing to save.
+#   write_failed     — the extraction succeeded but writing the
+#                      doc file to disk failed (permissions,
+#                      disk full, etc.). The failure is at the
+#                      write step, not the fetch step.
+#
+# The renderer's retry UI surfaces these codes verbatim; a future
+# session that wants richer per-reason guidance (an icon, a
+# suggestion) would add a mapping on the renderer side, not a
+# new code here.
+FAILURE_REASON_EXTRACTOR_ERROR = "extractor_error"
+FAILURE_REASON_NO_RESULT = "no_result"
+FAILURE_REASON_INVALID_RESULT = "invalid_result"
+FAILURE_REASON_EMPTY_CONTENT = "empty_content"
+FAILURE_REASON_WRITE_FAILED = "write_failed"
+
+
+class ExtractAttempt(NamedTuple):
+    """
+    The result of one URL's extraction attempt.
+
+    A named tuple rather than a plain dict because the fields
+    are read positionally by every caller, and a dict would let
+    a typo in a key name (`attempt["reson"]`) fail silently at
+    runtime. With a NamedTuple, an attribute typo is a
+    compile-time error under any type checker.
+
+    Fields on success:
+
+        result        = {"title": str, "content": str}
+        reason        = ""        (empty — no failure occurred)
+        error_message = ""        (empty — no failure occurred)
+
+    Fields on failure:
+
+        result        = None
+        reason        = one of the FAILURE_REASON_* constants above
+        error_message = a human-readable message (the exception's
+                        string form, or a fixed explanation when
+                        no exception was raised)
+
+    The invariant callers rely on: `result is None` if and only if
+    `reason` is non-empty. A caller that wants to know whether the
+    attempt succeeded checks `result is None`; a caller that wants
+    to know why it failed reads `reason` and `error_message`.
+    """
+    result: Optional[dict]
+    reason: str
+    error_message: str
+
+
 
 
 # =============================================================================
@@ -261,10 +340,10 @@ def _build_doc_slug(index: int, platform: str, title: str) -> str:
 def _extract_one(
     url: str,
     page: Page,
-) -> Optional[dict]:
+) -> ExtractAttempt:
     """
-    Dispatch a single URL to its platform extractor and return the
-    extraction result, or None on failure.
+    Dispatch a single URL to its platform extractor and return
+    the attempt outcome.
 
     The platform is detected from the URL; the corresponding
     extractor module is imported lazily on first use (see the
@@ -275,9 +354,11 @@ def _extract_one(
 
     Any exception the extractor raises — a Playwright timeout, a
     navigation error, a bug in the extractor — is caught here and
-    converted to `None`. The caller (`run_extract`) treats a None
-    return and a raised exception identically: log a warning,
-    emit a "failed" progress marker, move on to the next URL.
+    converted to a failed `ExtractAttempt` whose `reason` and
+    `error_message` describe the failure. The caller
+    (`run_extract`) records the reason and message in the topic's
+    failures.json so a retry attempt can accumulate the URL's
+    attempt count and the user can see why the URL failed.
 
     The exception is logged at warning level rather than debug
     because an extractor that raises is either a bug worth
@@ -290,7 +371,9 @@ def _extract_one(
               it and reads its content.
 
     Returns:
-        The extractor's result dict, or None.
+        An `ExtractAttempt`. See its docstring for the field
+        invariant: `result is None` if and only if `reason` is
+        non-empty.
     """
     platform = _detect_platform(url)
 
@@ -358,7 +441,27 @@ def _extract_one(
         log_warning(
             f"Extractor raised for {url} (platform={platform}): {exc}"
         )
-        return None
+        return ExtractAttempt(
+            result=None,
+            reason=FAILURE_REASON_EXTRACTOR_ERROR,
+            error_message=str(exc),
+        )
+
+    if result is None:
+        # The extractor signalled a clean failure — the page was
+        # reachable but its content was not extractable (a 404, a
+        # paywall, a JavaScript-only shell). The extractor's own
+        # contract does not distinguish these cases, so the
+        # reason is `no_result` and the message is a fixed string.
+        log_warning(
+            f"Extractor for platform '{platform}' returned None "
+            f"for {url}"
+        )
+        return ExtractAttempt(
+            result=None,
+            reason=FAILURE_REASON_NO_RESULT,
+            error_message="Extractor returned no result.",
+        )
 
     if not isinstance(result, dict):
         # A well-behaved extractor returns a dict or None. Anything
@@ -370,7 +473,14 @@ def _extract_one(
             f"{type(result).__name__} instead of dict or None "
             f"for {url}"
         )
-        return None
+        return ExtractAttempt(
+            result=None,
+            reason=FAILURE_REASON_INVALID_RESULT,
+            error_message=(
+                f"Extractor returned {type(result).__name__} "
+                f"instead of dict or None."
+            ),
+        )
 
     title = result.get("title")
     content = result.get("content")
@@ -383,9 +493,17 @@ def _extract_one(
             f"Extractor for platform '{platform}' returned empty "
             f"content for {url}"
         )
-        return None
+        return ExtractAttempt(
+            result=None,
+            reason=FAILURE_REASON_EMPTY_CONTENT,
+            error_message="Extractor returned empty content.",
+        )
 
-    return {"title": title, "content": content}
+    return ExtractAttempt(
+        result={"title": title, "content": content},
+        reason="",
+        error_message="",
+    )
 
 
 # =============================================================================
@@ -542,10 +660,53 @@ def run_extract(
         )
         return 1
 
+    # ---- Load existing failures for attemptCount accumulation ----
+    # The topic's failures.json, if it exists, holds records from
+    # previous batches. Reading it here lets this batch:
+    #
+    #   * increment each still-failing URL's attemptCount (so a
+    #     URL that has failed three times shows `attemptCount: 3`),
+    #   * and preserve records for URLs that are NOT part of this
+    #     batch (the user might have retried a subset; the rest
+    #     stay on file until retried or explicitly cleared).
+    #
+    # A malformed or unreadable file is not an error — the batch
+    # proceeds with an empty starting state, which means fresh
+    # attemptCounts. The alternative (failing the batch) would be
+    # worse: the extraction itself is unaffected by a corrupt
+    # failures.json, and losing the previous counts is a minor
+    # cosmetic loss compared to aborting the user's work.
+    existing_failures: dict[str, dict] = {}
+    failures_path = get_failures_path(topic_id)
+    try:
+        if failures_path.exists():
+            raw_failures = json.loads(
+                failures_path.read_text(encoding="utf-8")
+            )
+            if isinstance(raw_failures, list):
+                for record in raw_failures:
+                    if (
+                        isinstance(record, dict)
+                        and isinstance(record.get("url"), str)
+                    ):
+                        existing_failures[record["url"]] = record
+    except Exception as exc:
+        log_warning(
+            f"Could not read existing failures.json for topic "
+            f"'{topic_id}': {exc}"
+        )
+        existing_failures = {}
+
     # ---- Batch loop ----
     saved_count = 0
     failed_count = 0
     total = len(urls)
+    # The records this batch will write into failures.json. Only
+    # this batch's failures are appended here; URLs whose records
+    # are preserved from `existing_failures` are merged back after
+    # the loop (see the "Merge preserved and current failures"
+    # step below).
+    current_failures: list[dict] = []
 
     for i, url in enumerate(urls):
         index = i + 1
@@ -578,10 +739,28 @@ def run_extract(
         log_info(f"Extracting {index}/{total}: {url}")
 
         # ---- Extract ----
-        result = _extract_one(url, page)
+        attempt = _extract_one(url, page)
 
-        if result is None:
+        if attempt.result is None:
+            # The extraction failed. Record the failure with its
+            # accumulated attempt count, emit the failed progress
+            # marker, log a warning, and move to the next URL.
             failed_count += 1
+
+            prev = existing_failures.get(url)
+            prev_count = 0
+            if prev is not None:
+                raw_count = prev.get("attemptCount", 0)
+                if isinstance(raw_count, int) and raw_count >= 0:
+                    prev_count = raw_count
+
+            current_failures.append({
+                "url": url,
+                "reason": attempt.reason,
+                "attemptCount": prev_count + 1,
+                "lastAttemptAt": utc_now_iso(),
+                "errorMessage": attempt.error_message,
+            })
             emit_marker(
                 MARKER_EXTRACT_PROGRESS,
                 {
@@ -592,17 +771,26 @@ def run_extract(
                     "status": "failed",
                 },
             )
-            log_warning(f"Failed to extract: {url}")
+            log_warning(
+                f"Failed to extract: {url} "
+                f"({attempt.reason}: {attempt.error_message})"
+            )
             continue
+
+        # `attempt.result` is guaranteed non-None here — the
+        # invariant documented on ExtractAttempt ties `result is
+        # None` to a non-empty `reason`, and the branch above
+        # handles exactly that case.
+        extracted = attempt.result
 
         # ---- Write the doc file ----
         platform = _detect_platform(url)
-        slug = _build_doc_slug(index, platform, result["title"])
+        slug = _build_doc_slug(index, platform, extracted["title"])
         metadata = {
             "url": url,
-            "title": result["title"],
+            "title": extracted["title"],
             "platform": platform,
-            "word_count": count_words(result["content"]),
+            "word_count": count_words(extracted["content"]),
             "fetched_at": utc_now_iso(),
         }
 
@@ -610,7 +798,7 @@ def run_extract(
             doc_path = write_doc(
                 topic_id=topic_id,
                 slug=slug,
-                content=result["content"],
+                content=extracted["content"],
                 metadata=metadata,
             )
         except Exception as exc:
@@ -621,6 +809,21 @@ def run_extract(
             # the correct classification: a doc file that is not
             # on disk is a doc file the pipeline cannot use.
             failed_count += 1
+
+            prev = existing_failures.get(url)
+            prev_count = 0
+            if prev is not None:
+                raw_count = prev.get("attemptCount", 0)
+                if isinstance(raw_count, int) and raw_count >= 0:
+                    prev_count = raw_count
+
+            current_failures.append({
+                "url": url,
+                "reason": FAILURE_REASON_WRITE_FAILED,
+                "attemptCount": prev_count + 1,
+                "lastAttemptAt": utc_now_iso(),
+                "errorMessage": str(exc),
+            })
             emit_marker(
                 MARKER_EXTRACT_PROGRESS,
                 {
@@ -649,6 +852,45 @@ def run_extract(
             },
         )
         log_info(f"Saved {doc_path.name}")
+
+    # ---- Merge preserved and current failures ----
+    # The final failures.json carries two sources of records:
+    #
+    #   1. Records from the previous file for URLs that were NOT
+    #      part of this batch. They represent failed URLs the user
+    #      has not retried yet — the file must keep them so a
+    #      later retry still knows about them.
+    #
+    #   2. Records for URLs that failed in this batch, with their
+    #      attemptCount accumulated from the previous file.
+    #
+    # URLs that appeared in this batch and succeeded are absent
+    # from both sources — their previous failure records, if any,
+    # are dropped. A URL that succeeded no longer belongs in the
+    # failure list.
+    url_set = set(urls)
+    preserved_failures: list[dict] = [
+        record
+        for url_key, record in existing_failures.items()
+        if url_key not in url_set
+    ]
+    final_failures: list[dict] = preserved_failures + current_failures
+
+    # ---- Write failures.json ----
+    # Written before the terminal marker so that by the time the
+    # renderer's EXTRACT_DONE handler fires, the file on disk
+    # reflects the batch's outcome. A write failure is logged but
+    # does not change the batch's success/failure classification
+    # — the extraction itself completed; the failure file is a
+    # diagnostic artifact, and losing it is worse than aborting
+    # the batch over a disk-full condition.
+    try:
+        write_json_atomic(failures_path, final_failures)
+    except Exception as exc:
+        log_warning(
+            f"Could not write failures.json for topic "
+            f"'{topic_id}': {exc}"
+        )
 
     # ---- Emit terminal marker ----
     emit_marker(
