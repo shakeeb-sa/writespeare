@@ -11,10 +11,11 @@
     "build:main": "tsc",
     "build": "npm run build:renderer && npm run build:main",
     "pack": "npm run build && electron-builder",
-    "optimize:images": "node scripts/optimize-images.mjs"
+    "optimize-images": "node scripts/optimize-images.mjs"
   },
   "dependencies": {
     "archiver": "^7.0.1",
+    "archiver-utils": "^5.0.2",
     "axios": "^1.20.0",
     "cheerio": "^1.0.0",
     "electron-store": "^11.0.2",
@@ -33,6 +34,8 @@
   "build": {
     "appId": "com.writespeare.writer",
     "productName": "WriteSpeare",
+    "compression": "store",
+    "npmRebuild": false,
     "electronVersion": "44.3.0",
     "directories": {
       "output": "release"
@@ -104,7 +107,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.5.5",
     "electron": "^44.3.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "25.1.8",
     "eslint": "^10.10.0",
     "javascript-obfuscator": "^5.7.0",
     "postcss": "^8.5.28",
